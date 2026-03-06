@@ -2724,20 +2724,29 @@ app.post("/api/campus/groups/:id/messages", authMiddleware, (req, res) => {
 app.post("/api/im/summarize-plan", authMiddleware, async (req, res) => {
   const { scope = "global", groupId, dmUserId, limit = 50 } = req.body || {};
   let messages = [];
+  const safeLimit = Math.min(Number(limit) || 50, 200);
   if (scope === "global") {
-    messages = readJson(MESSAGES_FILE).slice(-Math.min(Number(limit) || 50, 200));
+    messages = readJson(MESSAGES_FILE).slice(-safeLimit);
   } else if (scope === "campus_group") {
     const groups = readJson(CAMPUS_GROUPS_FILE);
     const group = groups.find((g) => g.id === groupId);
     if (!group) return res.status(404).json({ error: "Group not found." });
     if (!group.members.some((m) => m.id === req.user.id)) return res.status(403).json({ error: "Not a group member." });
-    messages = group.messages.slice(-Math.min(Number(limit) || 50, 200));
+    messages = Array.isArray(group.messages) ? group.messages.slice(-safeLimit) : [];
+  } else if (scope === "interest_group") {
+    const groups = readJson(INTEREST_GROUPS_FILE);
+    const group = groups.find((g) => g.id === groupId);
+    if (!group) return res.status(404).json({ error: "Group not found." });
+    if (!Array.isArray(group.members) || !group.members.some((m) => m.id === req.user.id)) {
+      return res.status(403).json({ error: "Not a group member." });
+    }
+    messages = Array.isArray(group.messages) ? group.messages.slice(-safeLimit) : [];
   } else if (scope === "dm") {
     if (!dmUserId) return res.status(400).json({ error: "dmUserId required for dm scope." });
     const pair = normalizePair(req.user.id, dmUserId);
     messages = readJson(DIRECT_MESSAGES_FILE)
       .filter((m) => m.pair === pair)
-      .slice(-Math.min(Number(limit) || 50, 200));
+      .slice(-safeLimit);
   } else {
     return res.status(400).json({ error: "Invalid scope." });
   }

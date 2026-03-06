@@ -45,6 +45,11 @@ const chatThreadMeta = document.getElementById("chat-thread-meta");
 const chatThreadMessages = document.getElementById("chat-thread-messages");
 const chatThreadForm = document.getElementById("chat-thread-form");
 const chatThreadInput = document.getElementById("chat-thread-input");
+const chatRouteContext = document.getElementById("chat-route-context");
+const chatTopicChips = document.getElementById("chat-topic-chips");
+const chatInsertTemplateBtn = document.getElementById("chat-insert-template-btn");
+const chatSendCurrentPlanBtn = document.getElementById("chat-send-current-plan-btn");
+const chatSummarizeThreadBtn = document.getElementById("chat-summarize-thread-btn");
 
 const campusVerifyForm = document.getElementById("campus-verify-form");
 const campusGroupCreateForm = document.getElementById("campus-group-create-form");
@@ -80,6 +85,35 @@ const collabRefreshBtn = document.getElementById("collab-refresh-btn");
 const collabList = document.getElementById("collab-list");
 const collabSummary = document.getElementById("collab-summary");
 
+const flowStatusDiscover = document.getElementById("flow-status-discover");
+const flowStatusMatch = document.getElementById("flow-status-match");
+const flowStatusPlan = document.getElementById("flow-status-plan");
+const flowStatusLaunch = document.getElementById("flow-status-launch");
+const flowStatusJoin = document.getElementById("flow-status-join");
+const flowContext = document.getElementById("flow-context");
+const flowNextBtn = document.getElementById("flow-next-btn");
+const flowResetBtn = document.getElementById("flow-reset-btn");
+const flowGoDiscoverBtn = document.getElementById("flow-go-discover-btn");
+const flowGoMatchBtn = document.getElementById("flow-go-match-btn");
+const flowGoPlanBtn = document.getElementById("flow-go-plan-btn");
+const flowGoLaunchBtn = document.getElementById("flow-go-launch-btn");
+const flowGoJoinBtn = document.getElementById("flow-go-join-btn");
+
+const officialFilterQ = document.getElementById("official-filter-q");
+const officialRefreshBtn = document.getElementById("official-refresh-btn");
+const officialFeedList = document.getElementById("official-feed-list");
+const exploreRecommendHint = document.getElementById("explore-recommend-hint");
+const exploreBackFlowBtn = document.getElementById("explore-back-flow-btn");
+const appToast = document.getElementById("app-toast");
+const appScreenTitle = document.getElementById("app-screen-title");
+const appScreenSubtitle = document.getElementById("app-screen-subtitle");
+const flowProgressPill = document.getElementById("flow-progress-pill");
+const authQuickPill = document.getElementById("auth-quick-pill");
+const exploreTabs = document.getElementById("explore-tabs");
+const exploreTabButtons = Array.from(document.querySelectorAll(".explore-tab-btn[data-explore-target]"));
+const explorePanels = Array.from(document.querySelectorAll(".explore-panel-section[data-explore-panel]"));
+const exploreComposeCards = Array.from(document.querySelectorAll(".explore-panel-section .explore-compose-card"));
+
 let currentPlan = null;
 let currentActivity = null;
 let mapConfig = { enabled: false, apiKey: "" };
@@ -97,6 +131,46 @@ let chatFriendsPayload = { friends: [], requests: [] };
 let chatCampusGroups = [];
 let chatInterestGroups = [];
 let selectedChatTarget = null;
+let lastDiscoverContext = { city: "", country: "", category: "", q: "" };
+
+const FLOW_ORDER = ["discover", "match", "plan", "launch", "join"];
+const FLOW_LABELS = {
+  discover: "发现活动",
+  match: "找到人",
+  plan: "生成方案",
+  launch: "发起活动",
+  join: "报名成局",
+};
+let flowState = {
+  steps: { discover: false, match: false, plan: false, launch: false, join: false },
+  notes: { discover: "", match: "", plan: "", launch: "", join: "" },
+};
+const EXPLORE_PANELS = new Set(["official", "events", "nearby", "inspiration", "community", "campus"]);
+const EXPLORE_SECTION_MAP = {
+  official: "official-section",
+  events: "events-section",
+  nearby: "discover-section",
+  inspiration: "inspiration-section",
+  community: "community-section",
+  campus: "campus-section",
+};
+const EXPLORE_PANEL_LABELS = {
+  official: "官方聚合",
+  events: "活动",
+  nearby: "附近",
+  inspiration: "灵感",
+  community: "社群",
+  campus: "校园",
+};
+const SCREEN_META = {
+  plan: { title: "首页", subtitle: "主流程" },
+  social: { title: "社交", subtitle: "好友与群聊" },
+  explore: { title: "发现", subtitle: "活动与灵感" },
+  travel: { title: "旅行", subtitle: "跨国与协同" },
+};
+let currentExplorePanel = "official";
+let exploreManualOverrideUntil = 0;
+let toastTimer = null;
 
 const api = {
   async request(path, options = {}) {
@@ -358,6 +432,9 @@ const api = {
     if (params.limit) query.set("limit", params.limit);
     return this.request(`/api/discovery/places?${query.toString()}`);
   },
+  getAggregatedFeed() {
+    return this.request("/api/aggregated/feed");
+  },
   createCollabTrip(payload) {
     return this.request("/api/collab/trips", {
       method: "POST",
@@ -419,6 +496,10 @@ function renderAuthState() {
     logoutBtn.classList.add("hidden");
     chatMessages.innerHTML = "";
   }
+  if (authQuickPill) {
+    authQuickPill.textContent = currentUser ? currentUser.displayName : "游客模式";
+    authQuickPill.classList.toggle("online", Boolean(currentUser));
+  }
 }
 
 function escapeHtml(str) {
@@ -428,6 +509,348 @@ function escapeHtml(str) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function inferToastTone(message) {
+  const text = String(message || "");
+  if (/(失败|错误|invalid|failed|error)/i.test(text)) return "error";
+  if (/(成功|已|完成|ready|done)/i.test(text)) return "success";
+  return "info";
+}
+
+function showToast(message, tone = "") {
+  if (!appToast) return;
+  const text = String(message || "").trim();
+  if (!text) return;
+  const resolvedTone = tone || inferToastTone(text);
+  appToast.textContent = text;
+  appToast.classList.remove("hidden", "error", "success", "info");
+  appToast.classList.add(resolvedTone);
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    appToast.classList.add("hidden");
+  }, 2400);
+}
+
+function closeComposeCardForElement(element) {
+  const card = element?.closest?.(".explore-compose-card");
+  if (card) card.open = false;
+}
+
+function syncTopbarScreen() {
+  if (!appScreenTitle && !appScreenSubtitle) return;
+  const screen = window.location.hash.replace("#", "") || "plan";
+  const screenMeta = { ...(SCREEN_META[screen] || SCREEN_META.plan) };
+  if (screen === "explore") {
+    const panelLabel = EXPLORE_PANEL_LABELS[currentExplorePanel] || "官方聚合";
+    screenMeta.subtitle = `发现 · ${panelLabel}`;
+  }
+  if (appScreenTitle) appScreenTitle.textContent = screenMeta.title;
+  if (appScreenSubtitle) appScreenSubtitle.textContent = screenMeta.subtitle;
+}
+
+function updateFlowProgressPill() {
+  if (!flowProgressPill) return;
+  const done = FLOW_ORDER.reduce((count, step) => count + (flowState.steps[step] ? 1 : 0), 0);
+  flowProgressPill.textContent = `流程 ${done}/${FLOW_ORDER.length}`;
+}
+
+function renderItemMore(summary, bodyHtml) {
+  return `
+    <details class="item-more">
+      <summary>${escapeHtml(summary)}</summary>
+      <div class="item-more-body">${bodyHtml}</div>
+    </details>
+  `;
+}
+
+if (appToast) {
+  window.alert = (message) => {
+    showToast(message);
+  };
+}
+
+function normalizeFlowNote(note) {
+  return String(note || "").trim().slice(0, 80);
+}
+
+function getNextFlowStep() {
+  for (const step of FLOW_ORDER) {
+    if (!flowState.steps[step]) return step;
+  }
+  return "";
+}
+
+function renderFlowState() {
+  const statusEls = {
+    discover: flowStatusDiscover,
+    match: flowStatusMatch,
+    plan: flowStatusPlan,
+    launch: flowStatusLaunch,
+    join: flowStatusJoin,
+  };
+  const nextStep = getNextFlowStep();
+
+  for (const step of FLOW_ORDER) {
+    const done = Boolean(flowState.steps[step]);
+    const note = normalizeFlowNote(flowState.notes[step]);
+    const statusEl = statusEls[step];
+    if (statusEl) statusEl.textContent = done ? `已完成${note ? ` · ${note}` : ""}` : "待开始";
+  }
+
+  document.querySelectorAll(".flow-step-card").forEach((card) => {
+    const step = card.getAttribute("data-flow-step");
+    card.classList.toggle("done", Boolean(step && flowState.steps[step]));
+    card.classList.toggle("current", Boolean(step) && step === nextStep);
+  });
+
+  if (flowContext) {
+    const doneSummary = FLOW_ORDER.filter((step) => flowState.steps[step]).map((step) => {
+      const note = normalizeFlowNote(flowState.notes[step]);
+      return `${FLOW_LABELS[step]}${note ? `（${note}）` : ""}`;
+    });
+    if (!doneSummary.length) {
+      flowContext.textContent = "先从“发现活动”开始，选一个感兴趣的活动或地点。";
+    } else if (!nextStep) {
+      flowContext.textContent = `已完成全流程：${doneSummary.join(" → ")}。`;
+    } else {
+      flowContext.textContent = `已完成：${doneSummary.join(" → ")}。下一步：${FLOW_LABELS[nextStep]}。`;
+    }
+  }
+
+  if (flowNextBtn) {
+    if (nextStep) {
+      flowNextBtn.disabled = false;
+      flowNextBtn.textContent = `继续：${FLOW_LABELS[nextStep]}`;
+      flowNextBtn.setAttribute("data-next-step", nextStep);
+    } else {
+      flowNextBtn.disabled = true;
+      flowNextBtn.textContent = "流程已完成";
+      flowNextBtn.setAttribute("data-next-step", "");
+    }
+  }
+  updateFlowProgressPill();
+  updateExploreRecommendHint();
+}
+
+function markFlowStep(step, note = "") {
+  if (!FLOW_ORDER.includes(step)) return;
+  const normalized = normalizeFlowNote(note);
+  let changed = false;
+  if (!flowState.steps[step]) {
+    flowState.steps[step] = true;
+    changed = true;
+  }
+  if (normalized && flowState.notes[step] !== normalized) {
+    flowState.notes[step] = normalized;
+    changed = true;
+  }
+  if (changed) {
+    renderFlowState();
+    maybeApplyRecommendedExplorePanel(false);
+  }
+}
+
+function resetFlowState() {
+  flowState = {
+    steps: { discover: false, match: false, plan: false, launch: false, join: false },
+    notes: { discover: "", match: "", plan: "", launch: "", join: "" },
+  };
+  renderFlowState();
+  maybeApplyRecommendedExplorePanel(true);
+}
+
+function applyExplorePanel(panel) {
+  if (!EXPLORE_PANELS.has(panel)) return;
+  const changed = panel !== currentExplorePanel;
+  currentExplorePanel = panel;
+  explorePanels.forEach((section) => {
+    const target = section.getAttribute("data-explore-panel");
+    section.classList.toggle("explore-panel-hidden", target !== panel);
+  });
+  exploreTabButtons.forEach((btn) => {
+    const active = btn.getAttribute("data-explore-target") === panel;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+  return changed;
+}
+
+function syncExploreComposeCards(activePanel, openPrimaryCard = false) {
+  const cardsInPanel = [];
+  exploreComposeCards.forEach((card) => {
+    const panel = card.closest(".explore-panel-section")?.getAttribute("data-explore-panel") || "";
+    if (panel !== activePanel) {
+      card.open = false;
+      return;
+    }
+    cardsInPanel.push(card);
+  });
+  if (!openPrimaryCard || !cardsInPanel.length) return;
+  const primaryCard = cardsInPanel.find((card) => card.getAttribute("data-compose-primary") === "true") || cardsInPanel[0];
+  cardsInPanel.forEach((card) => {
+    card.open = card === primaryCard;
+  });
+}
+
+function setExplorePanel(panel, persist = true, manual = false, recommendationMode = false) {
+  if (!EXPLORE_PANELS.has(panel)) return;
+  if (manual) exploreManualOverrideUntil = Date.now() + 90 * 1000;
+  const changed = applyExplorePanel(panel);
+  if (recommendationMode) {
+    syncExploreComposeCards(panel, true);
+  } else if (changed) {
+    syncExploreComposeCards(panel, false);
+  }
+  if (persist) {
+    localStorage.setItem("explore_panel", panel);
+  }
+  if (changed || window.location.hash.replace("#", "") === "explore") {
+    syncTopbarScreen();
+  }
+}
+
+function inferExplorePanelFromNote(note = "") {
+  const t = String(note || "").toLowerCase();
+  if (!t) return "";
+  if (t.includes("校园")) return "campus";
+  if (t.includes("社群") || t.includes("同好")) return "community";
+  if (t.includes("附近") || t.includes("地点") || t.includes("商户")) return "nearby";
+  if (t.includes("灵感")) return "inspiration";
+  if (t.includes("活动") || t.includes("报名")) return "events";
+  if (t.includes("官方") || t.includes("聚合")) return "official";
+  return "";
+}
+
+function getRecommendedExplorePanel() {
+  const nextStep = getNextFlowStep();
+  const discoverNote = flowState.notes.discover || "";
+  const joinNote = flowState.notes.join || "";
+  const launchNote = flowState.notes.launch || "";
+  const noteBased = inferExplorePanelFromNote(`${discoverNote} ${joinNote} ${launchNote}`);
+
+  if (nextStep === "join") return "events";
+  if (nextStep === "discover") return noteBased || "official";
+  if (nextStep === "match") {
+    if (noteBased === "campus" || noteBased === "community") return noteBased;
+    return "community";
+  }
+  if (nextStep === "plan") return noteBased || "official";
+  if (nextStep === "launch") return "events";
+  return noteBased || "official";
+}
+
+function updateExploreRecommendHint() {
+  if (!exploreRecommendHint) return;
+  const panel = getRecommendedExplorePanel();
+  exploreRecommendHint.textContent = `智能推荐：${EXPLORE_PANEL_LABELS[panel] || "官方聚合"}`;
+}
+
+function maybeApplyRecommendedExplorePanel(force = false) {
+  const panel = getRecommendedExplorePanel();
+  if (!EXPLORE_PANELS.has(panel)) return;
+  if (!force && Date.now() < exploreManualOverrideUntil) {
+    updateExploreRecommendHint();
+    return;
+  }
+  if (panel !== currentExplorePanel) {
+    setExplorePanel(panel, false, false, true);
+  } else {
+    syncExploreComposeCards(panel, true);
+  }
+  updateExploreRecommendHint();
+}
+
+function syncExploreFloatingButton() {
+  if (!exploreBackFlowBtn) return;
+  const currentScreen = window.location.hash.replace("#", "") || "plan";
+  const exploreActive = currentScreen === "explore";
+  exploreBackFlowBtn.classList.toggle("hidden", !exploreActive);
+}
+
+function navigateToScreen(screen, sectionId = "") {
+  const targetHash = `#${screen}`;
+  if (window.location.hash !== targetHash) {
+    window.location.hash = screen;
+  }
+  setTimeout(() => {
+    if (!sectionId) return;
+    const el = document.getElementById(sectionId);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, 80);
+}
+
+function jumpToFlowStep(step) {
+  if (step === "discover") {
+    const panel = getRecommendedExplorePanel();
+    const sectionId = EXPLORE_SECTION_MAP[panel] || "official-section";
+    setExplorePanel(panel, false, false, true);
+    navigateToScreen("explore", sectionId);
+  } else if (step === "match") {
+    navigateToScreen("social", "social-section");
+  } else if (step === "plan") {
+    navigateToScreen("plan", currentPlan ? "plan-section" : "intent-section");
+  } else if (step === "launch") {
+    navigateToScreen("plan", currentPlan ? "plan-section" : "intent-section");
+  } else if (step === "join") {
+    setExplorePanel("events");
+    navigateToScreen("explore", "events-section");
+  }
+}
+
+function applyIntentToForm(intent) {
+  if (!form || !intent) return;
+  for (const [key, value] of Object.entries(intent)) {
+    const field = form.elements.namedItem(key);
+    if (field && typeof field.value !== "undefined") field.value = value;
+  }
+}
+
+function buildIntentFromSeed(seed = {}) {
+  const tags = Array.isArray(seed.tags)
+    ? seed.tags
+    : String(seed.tags || "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+  const tagPool = [...tags, seed.category, seed.interest, seed.title, seed.description, seed.content]
+    .filter(Boolean)
+    .join(" ");
+  return {
+    companion: "朋友",
+    people: "2",
+    budget: "中预算",
+    timeSlot: "周末半天",
+    interest: pickInterestFromTags([tagPool]),
+    area: areaFromCity(seed.city || seed.toCity || ""),
+  };
+}
+
+async function applyGeneratedPlan(plan, note = "") {
+  currentPlan = plan;
+  renderPlan(currentPlan);
+  await renderMap(currentPlan);
+  planSection.classList.remove("hidden");
+  activitySection.classList.add("hidden");
+  markFlowStep("plan", note || currentPlan.title || "路线已生成");
+  navigateToScreen("plan", "plan-section");
+}
+
+async function startBuddyDiscussion(prefillText = "") {
+  navigateToScreen("social", "social-section");
+  if (!currentUser) {
+    alert("请先登录后找搭子。");
+    return;
+  }
+  try {
+    await openChatTarget({ type: "global", id: "global", name: "Global 群聊" });
+    if (prefillText) {
+      appendSnippetToThreadInput(`【找搭子】${prefillText}`);
+    }
+    markFlowStep("match", prefillText || "已进入路线讨论");
+  } catch (err) {
+    alert(`打开聊天失败: ${err.message}`);
+  }
 }
 
 function appendMessage(message) {
@@ -462,19 +885,27 @@ function renderTravelPosts(posts) {
   travelList.innerHTML = posts
     .map((post) => {
       const tags = Array.isArray(post.tags) && post.tags.length ? post.tags.join(", ") : "无";
+      const moreBody = `
+        <p class="chat-content">${escapeHtml(post.note || "无备注")}</p>
+        <div class="actions">
+          <button class="btn-secondary travel-discuss-btn" data-post-id="${post.id}" data-post-city="${escapeHtml(
+            post.toCity || "",
+          )}" data-post-country="${escapeHtml(post.toCountry || "")}" type="button">发起找搭子讨论</button>
+        </div>
+      `;
       return `
-        <article class="travel-item">
+        <article class="travel-item compact">
           <div class="travel-head">
             <strong>${post.fromCountry} -> ${post.toCountry} / ${post.toCity}</strong>
             <span>${post.startDate} ~ ${post.endDate}</span>
           </div>
           <div class="travel-meta">发起人：${post.creator.displayName} | 成员：${post.members.length}</div>
           <div class="travel-meta">预算：${post.budget || "未填写"} | 标签：${tags}</div>
-          <p class="chat-content">${escapeHtml(post.note || "无备注")}</p>
-          <div class="actions">
+          <div class="actions compact-primary-actions">
             <button class="btn-secondary travel-join-btn" data-post-id="${post.id}" type="button">加入行程</button>
             <button class="btn-secondary travel-route-btn" data-post-id="${post.id}" type="button">生成当地路线</button>
           </div>
+          ${renderItemMore("更多信息与操作", moreBody)}
         </article>
       `;
     })
@@ -577,12 +1008,65 @@ function renderChatThread(messages) {
       const self = senderId && senderId === currentUser?.id;
       const who = m.user?.displayName || m.fromUserId || "Unknown";
       const geo = m.geo?.label ? ` | ${escapeHtml(m.geo.label)}` : "";
+      const text = String(m.content || "");
+      const isRouteLike = text.includes("【候选路线】") || text.includes("【路线讨论模板】");
       return `<article class="chat-item ${self ? "self" : ""}"><div class="chat-meta">${escapeHtml(who)} · ${new Date(
         m.createdAt,
-      ).toLocaleString()}${geo}</div><p class="chat-content">${escapeHtml(m.content || "")}</p></article>`;
+      ).toLocaleString()}${geo}</div><p class="chat-content ${isRouteLike ? "route" : ""}">${escapeHtml(text).replaceAll("\n", "<br/>")}</p></article>`;
     })
     .join("");
   chatThreadMessages.scrollTop = chatThreadMessages.scrollHeight;
+}
+
+function updateChatRouteContext() {
+  if (!chatRouteContext) return;
+  if (!currentPlan || !Array.isArray(currentPlan.route) || !currentPlan.route.length) {
+    chatRouteContext.innerHTML = `<strong>路线讨论助手</strong><span>先生成路线，再发送到当前聊天进行讨论。</span>`;
+    return;
+  }
+  const quickStops = currentPlan.route
+    .slice(0, 3)
+    .map((s) => `${formatStopDateTime(s)} ${s.point}`)
+    .join(" · ");
+  chatRouteContext.innerHTML = `
+    <strong>${escapeHtml(currentPlan.title || "当前路线")}</strong>
+    <span>${escapeHtml(quickStops)}</span>
+  `;
+}
+
+function appendSnippetToThreadInput(snippet) {
+  const text = String(snippet || "").trim();
+  if (!text) return;
+  const current = chatThreadInput.value.trim();
+  chatThreadInput.value = current ? `${current}\n${text}` : text;
+  chatThreadInput.focus();
+}
+
+function buildSummarizePayloadForTarget(target) {
+  if (!target) return null;
+  if (target.type === "global") return { scope: "global", limit: 100 };
+  if (target.type === "campus") return { scope: "campus_group", groupId: target.id, limit: 100 };
+  if (target.type === "interest") return { scope: "interest_group", groupId: target.id, limit: 100 };
+  if (target.type === "dm") return { scope: "dm", dmUserId: target.id, limit: 100 };
+  return null;
+}
+
+async function sendContentToSelectedChat(content) {
+  if (!selectedChatTarget) throw new Error("请先在左侧选择一个聊天。");
+  const message = String(content || "").trim();
+  if (!message) return;
+  if (selectedChatTarget.type === "dm") {
+    await api.sendDm(selectedChatTarget.id, { content: message });
+  } else if (selectedChatTarget.type === "global") {
+    await api.sendMessage(message);
+  } else if (selectedChatTarget.type === "campus") {
+    await api.sendCampusGroupMessage(selectedChatTarget.id, { content: message });
+  } else if (selectedChatTarget.type === "interest") {
+    await api.sendInterestGroupMessage(selectedChatTarget.id, { content: message });
+  } else {
+    throw new Error("暂不支持当前会话类型。");
+  }
+  await openChatTarget(selectedChatTarget);
 }
 
 async function openChatTarget(target) {
@@ -595,8 +1079,19 @@ async function openChatTarget(target) {
     campus: "校园群聊",
     interest: "兴趣群聊",
   };
-  chatThreadMeta.textContent = metaMap[target.type] || "聊天";
+  chatThreadMeta.textContent = `${metaMap[target.type] || "聊天"} · 推荐讨论：时间 / 预算 / 必去点`;
+  const placeholderMap = {
+    dm: "和好友对齐时间、预算、必去点...",
+    global: "发起路线讨论：时间、预算、兴趣偏好...",
+    campus: "和同学讨论路线分工、集合点、交通...",
+    interest: "围绕兴趣主题讨论当天路线...",
+  };
+  chatThreadInput.placeholder = placeholderMap[target.type] || "输入消息...";
   markActiveChatTarget();
+  updateChatRouteContext();
+  if (target.type !== "global") {
+    markFlowStep("match", target.name || metaMap[target.type] || "已进入聊天");
+  }
 
   try {
     let messages = [];
@@ -726,13 +1221,13 @@ function renderCampusGroups(groups) {
   campusGroupsList.innerHTML = groups
     .map(
       (g) => `
-      <article class="travel-item">
+      <article class="travel-item compact">
         <div class="travel-head"><strong>${escapeHtml(g.name)}</strong><span>${escapeHtml(g.campusName)}</span></div>
         <div class="travel-meta">ID: ${g.id} | 成员: ${g.members.length}</div>
-        <p class="chat-content">${escapeHtml(g.description || "无描述")}</p>
-        <div class="actions">
+        <div class="actions compact-primary-actions">
           <button class="btn-secondary campus-join-btn" type="button" data-group-id="${g.id}">加入群</button>
         </div>
+        ${renderItemMore("群信息", `<p class="chat-content">${escapeHtml(g.description || "无描述")}</p>`)}
       </article>
     `,
     )
@@ -766,15 +1261,24 @@ function renderInterestGroups(groups) {
   communityList.innerHTML = groups
     .map((g) => {
       const campusTag = g.campusOnly ? "校园限定" : "公开";
+      const isMember = Array.isArray(g.members) && g.members.some((m) => m.id === currentUser?.id);
+      const moreBody = `
+        <p class="chat-content">${escapeHtml(g.description || "无描述")}</p>
+        <div class="actions">
+          <button class="btn-secondary interest-chat-btn" data-group-id="${g.id}" data-group-name="${escapeHtml(g.name)}" type="button">${
+            isMember ? "进入群聊讨论路线" : "加入并讨论路线"
+          }</button>
+        </div>
+      `;
       return `
-      <article class="travel-item">
+      <article class="travel-item compact">
         <div class="travel-head"><strong>${escapeHtml(g.name)}</strong><span>${escapeHtml(g.city)}, ${escapeHtml(g.country)}</span></div>
         <div class="travel-meta">兴趣：${escapeHtml(g.interest)} | 成员：${g.members?.length || 0} | ${campusTag}</div>
         <div class="travel-meta">下次活动：${new Date(g.nextMeetupAt).toLocaleString()}</div>
-        <p class="chat-content">${escapeHtml(g.description || "无描述")}</p>
-        <div class="actions">
+        <div class="actions compact-primary-actions">
           <button class="btn-secondary interest-join-btn" data-group-id="${g.id}" type="button">加入社群</button>
         </div>
+        ${renderItemMore("社群详情与讨论", moreBody)}
       </article>
     `;
     })
@@ -789,6 +1293,86 @@ async function loadInterestGroups() {
   chatInterestGroups = groups;
   renderInterestGroups(groups);
   renderChatGroupsDirectory();
+}
+
+function feedTypeLabel(type) {
+  if (type === "official") return "官方发布";
+  if (type === "local_event") return "本地活动";
+  if (type === "travel") return "旅行找搭子";
+  if (type === "inspiration") return "灵感内容";
+  return "聚合内容";
+}
+
+function renderAggregatedFeed(items) {
+  if (!officialFeedList) return;
+  if (!items.length) {
+    officialFeedList.innerHTML = `<div class="meta">暂无匹配信息。</div>`;
+    return;
+  }
+  officialFeedList.innerHTML = items
+    .slice(0, 80)
+    .map((item) => {
+      const type = String(item.type || "");
+      const title = String(item.title || item.name || "未命名内容");
+      const city = String(item.city || item.toCity || "");
+      const country = String(item.country || item.toCountry || "");
+      const category = String(item.category || item.interest || "");
+      const desc = String(item.content || item.description || item.note || "").slice(0, 220);
+      const tags = Array.isArray(item.tags) ? item.tags.join(",") : "";
+      const when = item.startAt || item.createdAt;
+      const whenText = when ? new Date(when).toLocaleString() : "时间未提供";
+      const sourceText = item.source || item.creator?.displayName || "聚合源";
+      const url = item.ticketUrl || item.link || item.booking?.official || "";
+      const moreBody = `
+        <p class="chat-content">${escapeHtml(desc || "暂无详情")}</p>
+        <div class="actions">
+          ${
+            url
+              ? `<a href="${escapeHtml(url)}" target="_blank" rel="noreferrer">查看详情</a>`
+              : `<span class="meta">暂无外链</span>`
+          }
+          <button class="btn-secondary feed-buddy-btn" type="button" data-feed-title="${escapeHtml(title)}">发起找搭子讨论</button>
+        </div>
+      `;
+      return `
+      <article class="travel-item compact">
+        <div class="travel-head"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(feedTypeLabel(type))}</span></div>
+        <div class="travel-meta">${escapeHtml(city || "未知城市")}${country ? `, ${escapeHtml(country)}` : ""} ${category ? `| ${escapeHtml(category)}` : ""}</div>
+        <div class="travel-meta">${escapeHtml(whenText)} | 来源：${escapeHtml(sourceText)}</div>
+        <div class="actions compact-primary-actions">
+          <button
+            class="btn-secondary feed-plan-btn"
+            type="button"
+            data-feed-title="${escapeHtml(title)}"
+            data-feed-city="${escapeHtml(city)}"
+            data-feed-country="${escapeHtml(country)}"
+            data-feed-category="${escapeHtml(category)}"
+            data-feed-tags="${escapeHtml(tags)}"
+            data-feed-desc="${escapeHtml(desc)}"
+          >转成路线</button>
+        </div>
+        ${renderItemMore("详情与讨论", moreBody)}
+      </article>
+    `;
+    })
+    .join("");
+}
+
+async function loadAggregatedFeed() {
+  if (!officialFeedList) return;
+  const all = await api.getAggregatedFeed();
+  const keyword = String(officialFilterQ?.value || "")
+    .trim()
+    .toLowerCase();
+  const filtered = keyword
+    ? all.filter((item) => {
+        const text = `${item.type || ""} ${item.title || ""} ${item.content || ""} ${item.description || ""} ${item.city || ""} ${
+          item.toCity || ""
+        } ${(item.tags || []).join(" ")}`.toLowerCase();
+        return text.includes(keyword);
+      })
+    : all;
+  renderAggregatedFeed(filtered);
 }
 
 function countRsvp(event, status) {
@@ -808,17 +1392,32 @@ function renderLocalEvents(events) {
       const link = e.ticketUrl
         ? `<a href="${e.ticketUrl}" target="_blank" rel="noreferrer">购票/报名</a>`
         : `<span class="meta">无票务链接</span>`;
-      return `
-      <article class="travel-item">
-        <div class="travel-head"><strong>${escapeHtml(e.title)}</strong><span>${new Date(e.startAt).toLocaleString()}</span></div>
-        <div class="travel-meta">${escapeHtml(e.city)}, ${escapeHtml(e.country)} | ${escapeHtml(e.category)} | ${price}</div>
-        <div class="travel-meta">地点：${escapeHtml(e.venueName || "待定")} | 去：${going} | 感兴趣：${interested}</div>
+      const moreBody = `
         <p class="chat-content">${escapeHtml(e.description || "无活动说明")}</p>
         <div class="actions">
           ${link}
+          <button class="btn-secondary event-buddy-btn" data-event-title="${escapeHtml(e.title)}" type="button">发起找搭子讨论</button>
           <button class="btn-secondary event-rsvp-btn" data-event-id="${e.id}" data-status="interested" type="button">感兴趣</button>
+        </div>
+      `;
+      return `
+      <article class="travel-item compact">
+        <div class="travel-head"><strong>${escapeHtml(e.title)}</strong><span>${new Date(e.startAt).toLocaleString()}</span></div>
+        <div class="travel-meta">${escapeHtml(e.city)}, ${escapeHtml(e.country)} | ${escapeHtml(e.category)} | ${price}</div>
+        <div class="travel-meta">地点：${escapeHtml(e.venueName || "待定")} | 去：${going} | 感兴趣：${interested}</div>
+        <div class="actions compact-primary-actions">
+          <button
+            class="btn-secondary event-plan-btn"
+            data-event-title="${escapeHtml(e.title)}"
+            data-event-city="${escapeHtml(e.city || "")}"
+            data-event-country="${escapeHtml(e.country || "")}"
+            data-event-category="${escapeHtml(e.category || "")}"
+            data-event-desc="${escapeHtml(e.description || "")}"
+            type="button"
+          >按活动生成路线</button>
           <button class="btn-secondary event-rsvp-btn" data-event-id="${e.id}" data-status="going" type="button">我要去</button>
         </div>
+        ${renderItemMore("活动详情与更多操作", moreBody)}
       </article>
     `;
     })
@@ -858,19 +1457,25 @@ function renderInspirations(posts) {
     .map((p) => {
       const tags = (p.tags || []).join(" · ");
       const places = (p.places || []).join(" · ");
+      const moreBody = `
+        <p class="chat-content">${escapeHtml(p.content || "")}</p>
+        <div class="actions">
+          <button class="btn-secondary inspiration-like-btn" data-ins-id="${p.id}" type="button">点赞/取消</button>
+          <button class="btn-secondary inspiration-buddy-btn" data-ins-title="${escapeHtml(p.title || "")}" type="button">发起找搭子讨论</button>
+        </div>
+      `;
       return `
-      <article class="travel-item">
+      <article class="travel-item compact">
         <div class="travel-head"><strong>${escapeHtml(p.title)}</strong><span>${escapeHtml(p.city)}, ${escapeHtml(p.country)}</span></div>
         <div class="travel-meta">作者：${escapeHtml(p.creator?.displayName || "Unknown")} | 点赞：${(p.likes || []).length}</div>
         <div class="travel-meta">标签：${escapeHtml(tags || "无")} </div>
         <div class="travel-meta">地点：${escapeHtml(places || "无")} </div>
-        <p class="chat-content">${escapeHtml(p.content || "")}</p>
-        <div class="actions">
-          <button class="btn-secondary inspiration-like-btn" data-ins-id="${p.id}" type="button">点赞/取消</button>
+        <div class="actions compact-primary-actions">
           <button class="btn-secondary inspiration-plan-btn" data-ins-id="${p.id}" data-ins-city="${escapeHtml(
             p.city || "",
           )}" data-ins-tags="${escapeHtml((p.tags || []).join(","))}" type="button">生成同款路线</button>
         </div>
+        ${renderItemMore("内容详情与互动", moreBody)}
       </article>
     `;
     })
@@ -895,18 +1500,32 @@ function renderDiscoverPlaces(places) {
       const mapsUrl = p.googleMapsUri || createGoogleMapsSearchUrl(p.matchedName || p.point);
       const rating = p.rating ? `${p.rating} (${p.userRatingCount || 0})` : "暂无评分";
       const ticket = p.ticketing?.required ? "可能需门票" : "通常无需门票";
-      return `
-      <article class="travel-item">
-        <div class="travel-head"><strong>${escapeHtml(p.point)}</strong><span>${escapeHtml(p.source || "")}</span></div>
-        <div class="travel-meta">${escapeHtml(p.matchedName || "")}</div>
-        <div class="travel-meta">评分：${rating} | ${ticket}</div>
+      const moreBody = `
         <p class="chat-content">${escapeHtml(p.intro || "")}</p>
         <div class="actions">
-          <a href="${mapsUrl}" target="_blank" rel="noreferrer">Google 地图</a>
           ${p.booking?.official ? `<a href="${p.booking.official}" target="_blank" rel="noreferrer">官网</a>` : ""}
           ${p.ticketing?.required && p.booking?.klook ? `<a href="${p.booking.klook}" target="_blank" rel="noreferrer">Klook</a>` : ""}
           ${p.ticketing?.required && p.booking?.kkday ? `<a href="${p.booking.kkday}" target="_blank" rel="noreferrer">KKday</a>` : ""}
+          <button class="btn-secondary discover-buddy-btn" type="button" data-place-name="${escapeHtml(p.point || "")}">发起找搭子讨论</button>
         </div>
+      `;
+      return `
+      <article class="travel-item compact">
+        <div class="travel-head"><strong>${escapeHtml(p.point)}</strong><span>${escapeHtml(p.source || "")}</span></div>
+        <div class="travel-meta">${escapeHtml(p.matchedName || "")}</div>
+        <div class="travel-meta">评分：${rating} | ${ticket}</div>
+        <div class="actions compact-primary-actions">
+          <a href="${mapsUrl}" target="_blank" rel="noreferrer">Google 地图</a>
+          <button
+            class="btn-secondary discover-plan-btn"
+            type="button"
+            data-place-name="${escapeHtml(p.point || "")}"
+            data-place-city="${escapeHtml(p.city || "")}"
+            data-place-country="${escapeHtml(p.country || "")}"
+            data-place-intro="${escapeHtml(p.intro || "")}"
+          >按地点生成路线</button>
+        </div>
+        ${renderItemMore("地点详情与更多操作", moreBody)}
       </article>
     `;
     })
@@ -921,13 +1540,13 @@ function renderCollabTrips(trips) {
   collabList.innerHTML = trips
     .map((t) => {
       return `
-      <article class="travel-item">
+      <article class="travel-item compact">
         <div class="travel-head"><strong>${escapeHtml(t.title)}</strong><span>${escapeHtml(t.destinationCity)}, ${escapeHtml(
           t.destinationCountry,
         )}</span></div>
         <div class="travel-meta">ID: ${t.id} | 成员：${(t.members || []).length} | ${t.startDate} ~ ${t.endDate}</div>
         <div class="travel-meta">行程项：${(t.items || []).length} | 费用：${(t.expenses || []).length}</div>
-        <div class="actions">
+        <div class="actions compact-primary-actions">
           <button class="btn-secondary collab-join-btn" data-trip-id="${t.id}" type="button">加入行程</button>
           <button class="btn-secondary collab-summary-btn" data-trip-id="${t.id}" type="button">查看分账</button>
         </div>
@@ -1018,10 +1637,6 @@ function renderPlan(plan) {
       const mapsUrl = createGoogleMapsSearchUrl(step.matchedName || step.point);
       const status = step.verified ? "真实地点" : "待确认";
       const stopDateTime = formatStopDateTime(step);
-      const intro = step.intro ? `<p class="chat-content">${escapeHtml(step.intro)}</p>` : "";
-      const ticket = step.ticketing?.required
-        ? `<div class="travel-meta">门票：可能需要提前购票</div>`
-        : `<div class="travel-meta">门票：通常无需单独门票</div>`;
       const bookingLinks = [];
       if (step.ticketing?.required && step.booking?.klook) {
         bookingLinks.push(`<a href="${step.booking.klook}" target="_blank" rel="noreferrer">Klook 买票</a>`);
@@ -1034,13 +1649,24 @@ function renderPlan(plan) {
       } else if (step.booking?.official) {
         bookingLinks.push(`<a href="${step.booking.official}" target="_blank" rel="noreferrer">官网</a>`);
       }
-      bookingLinks.push(`<a href="${mapsUrl}" target="_blank" rel="noreferrer">Google 地图</a>`);
+      const mapLink = `<a href="${mapsUrl}" target="_blank" rel="noreferrer">Google 地图</a>`;
+      const primaryLinks = [mapLink];
+      if (bookingLinks.length) primaryLinks.push(bookingLinks[0]);
+      const moreLinks = bookingLinks.slice(1);
+      const moreBody = `
+        ${step.intro ? `<p class="chat-content">${escapeHtml(step.intro)}</p>` : ""}
+        <div class="travel-meta">${step.ticketing?.required ? "门票：可能需要提前购票" : "门票：通常无需单独门票"}</div>
+        ${
+          moreLinks.length
+            ? `<div class="actions">${moreLinks.join("")}</div>`
+            : `<div class="meta">暂无更多外链。</div>`
+        }
+      `;
       return `
-        <article class="travel-item">
+        <article class="travel-item compact">
           <div class="travel-head"><strong>${escapeHtml(stopDateTime)} · ${escapeHtml(step.point)}</strong><span>${status}</span></div>
-          ${intro}
-          ${ticket}
-          <div class="actions">${bookingLinks.join("")}</div>
+          <div class="actions compact-primary-actions">${primaryLinks.join("")}</div>
+          ${renderItemMore("站点介绍与购票入口", moreBody)}
         </article>
       `;
     })
@@ -1068,6 +1694,8 @@ function renderPlan(plan) {
     <div class="travel-list">${routeHtml}</div>
     <p class="why">${plan.reason}</p>
   `;
+  markFlowStep("plan", plan.title || "路线已生成");
+  updateChatRouteContext();
 }
 
 function formatStopDateTime(step) {
@@ -1289,6 +1917,7 @@ function renderActivity(activity) {
     <p>${activity.members}</p>
     <p>分享链接：<a href="${activity.link}" target="_blank" rel="noreferrer">${activity.link}</a></p>
   `;
+  markFlowStep("launch", activity.code ? `活动 ${activity.code}` : "活动已发起");
 }
 
 async function applyAuthSuccess(result, successMessage) {
@@ -1300,6 +1929,7 @@ async function applyAuthSuccess(result, successMessage) {
   await loadInterestGroups();
   await loadLocalEvents();
   await loadInspirations();
+  await loadAggregatedFeed().catch(() => {});
   await loadCollabTrips();
   connectChatSocket();
   if (successMessage) alert(successMessage);
@@ -1415,6 +2045,7 @@ logoutBtn.addEventListener("click", () => {
   loadInterestGroups().catch(() => {});
   loadLocalEvents().catch(() => {});
   loadInspirations().catch(() => {});
+  loadAggregatedFeed().catch(() => {});
   loadCollabTrips().catch(() => {});
 });
 
@@ -1426,6 +2057,7 @@ friendRequestForm.addEventListener("submit", async (e) => {
     await api.sendFriendRequest(data.toUsername);
     friendRequestForm.reset();
     await loadFriendsPanel();
+    markFlowStep("match", `好友请求 @${data.toUsername}`);
     alert("好友请求已发送。");
   } catch (err) {
     alert(`发送失败: ${err.message}`);
@@ -1454,6 +2086,7 @@ friendsList.addEventListener("click", async (e) => {
     try {
       await api.respondFriendRequest(requestId, accept);
       await loadFriendsPanel();
+      if (accept) markFlowStep("match", "已建立好友关系");
     } catch (err) {
       alert(`处理失败: ${err.message}`);
     }
@@ -1483,6 +2116,7 @@ chatGroupsList.addEventListener("click", async (e) => {
     try {
       await api.joinCampusGroup(groupId);
       await loadCampusGroups();
+      markFlowStep("match", `加入校园群 ${groupId.slice(-6)}`);
       alert("已加入校园群。");
     } catch (err) {
       alert(`加入失败: ${err.message}`);
@@ -1497,6 +2131,7 @@ chatGroupsList.addEventListener("click", async (e) => {
     try {
       await api.joinInterestGroup(groupId);
       await loadInterestGroups();
+      markFlowStep("match", `加入兴趣群 ${groupId.slice(-6)}`);
       alert("已加入兴趣群。");
     } catch (err) {
       alert(`加入失败: ${err.message}`);
@@ -1507,25 +2142,79 @@ chatGroupsList.addEventListener("click", async (e) => {
 chatThreadForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   if (!currentUser) return alert("请先登录。");
-  if (!selectedChatTarget) return alert("请先在左侧选择一个聊天。");
   const content = chatThreadInput.value.trim();
   if (!content) return;
   try {
-    if (selectedChatTarget.type === "dm") {
-      await api.sendDm(selectedChatTarget.id, { content });
-    } else if (selectedChatTarget.type === "global") {
-      await api.sendMessage(content);
-    } else if (selectedChatTarget.type === "campus") {
-      await api.sendCampusGroupMessage(selectedChatTarget.id, { content });
-    } else if (selectedChatTarget.type === "interest") {
-      await api.sendInterestGroupMessage(selectedChatTarget.id, { content });
-    }
+    await sendContentToSelectedChat(content);
     chatThreadInput.value = "";
-    await openChatTarget(selectedChatTarget);
+    if (selectedChatTarget) {
+      markFlowStep("match", `已在${selectedChatTarget.name || "会话"}讨论`);
+    }
   } catch (err) {
     alert(`发送失败: ${err.message}`);
   }
 });
+
+const routeDiscussionTemplate = `【路线讨论模板】
+日期：
+人数：
+预算：
+必去点：
+集合点：
+交通：
+住宿：
+备注：`;
+
+if (chatTopicChips) {
+  chatTopicChips.addEventListener("click", (e) => {
+    const btn = e.target.closest(".chat-chip-btn");
+    if (!btn) return;
+    const snippet = btn.getAttribute("data-snippet");
+    appendSnippetToThreadInput(snippet || "");
+  });
+}
+
+if (chatInsertTemplateBtn) {
+  chatInsertTemplateBtn.addEventListener("click", () => {
+    appendSnippetToThreadInput(routeDiscussionTemplate);
+  });
+}
+
+if (chatSendCurrentPlanBtn) {
+  chatSendCurrentPlanBtn.addEventListener("click", async () => {
+    if (!currentUser) return alert("请先登录。");
+    if (!currentPlan || !Array.isArray(currentPlan.route) || !currentPlan.route.length) {
+      return alert("当前没有可发送的路线，请先生成路线。");
+    }
+    const routeText = currentPlan.route
+      .slice(0, 6)
+      .map((step, idx) => `${idx + 1}. ${formatStopDateTime(step)} ${step.point}`)
+      .join("\n");
+    const content = `【候选路线】${currentPlan.title}\n${routeText}\n预算：${currentPlan.budgetEstimate || "待定"}`;
+    try {
+      await sendContentToSelectedChat(content);
+      alert("已发送当前路线到会话。");
+    } catch (err) {
+      alert(`发送失败: ${err.message}`);
+    }
+  });
+}
+
+if (chatSummarizeThreadBtn) {
+  chatSummarizeThreadBtn.addEventListener("click", async () => {
+    if (!currentUser) return alert("请先登录。");
+    if (!selectedChatTarget) return alert("请先在左侧选择一个聊天。");
+    const payload = buildSummarizePayloadForTarget(selectedChatTarget);
+    if (!payload) return alert("当前会话暂不支持总结。");
+    try {
+      const result = await api.summarizePlan(payload);
+      await applyGeneratedPlan(result.plan, `来自${selectedChatTarget.name || "会话"}总结`);
+      alert("已根据当前会话总结生成路线。");
+    } catch (err) {
+      alert(`总结失败: ${err.message}`);
+    }
+  });
+}
 
 campusVerifyForm.addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -1534,6 +2223,7 @@ campusVerifyForm.addEventListener("submit", async (e) => {
   try {
     await api.verifyCampus(data);
     campusVerifyForm.reset();
+    closeComposeCardForElement(campusVerifyForm);
     await restoreSession();
     await loadCampusGroups();
     alert("校园认证成功。");
@@ -1553,7 +2243,9 @@ campusGroupCreateForm.addEventListener("submit", async (e) => {
       geo: data.geoLabel ? { label: data.geoLabel } : null,
     });
     campusGroupCreateForm.reset();
+    closeComposeCardForElement(campusGroupCreateForm);
     await loadCampusGroups();
+    markFlowStep("match", `创建校园群 ${data.name}`);
     alert("校园群已创建。");
   } catch (err) {
     alert(`创建失败: ${err.message}`);
@@ -1569,6 +2261,7 @@ campusGroupsList.addEventListener("click", async (e) => {
   try {
     await api.joinCampusGroup(groupId);
     await loadCampusGroups();
+    markFlowStep("match", `加入校园群 ${groupId.slice(-6)}`);
     alert("已加入校园群。");
   } catch (err) {
     alert(`加入失败: ${err.message}`);
@@ -1588,6 +2281,8 @@ campusGroupMessageForm.addEventListener("submit", async (e) => {
       await openChatTarget(selectedChatTarget);
     }
     campusGroupMessageForm.reset();
+    closeComposeCardForElement(campusGroupMessageForm);
+    markFlowStep("match", `校园群 ${data.groupId} 讨论`);
   } catch (err) {
     alert(`发送失败: ${err.message}`);
   }
@@ -1597,10 +2292,7 @@ summarizeGlobalBtn.addEventListener("click", async () => {
   if (!currentUser) return alert("请先登录。");
   try {
     const result = await api.summarizePlan({ scope: "global", limit: 80 });
-    currentPlan = result.plan;
-    renderPlan(currentPlan);
-    await renderMap(currentPlan);
-    planSection.classList.remove("hidden");
+    await applyGeneratedPlan(result.plan, "来自 Global 群聊总结");
     alert("已根据群聊总结需求并生成路线。");
   } catch (err) {
     alert(`总结失败: ${err.message}`);
@@ -1613,10 +2305,7 @@ summarizeCampusBtn.addEventListener("click", async () => {
   if (!groupId) return;
   try {
     const result = await api.summarizePlan({ scope: "campus_group", groupId, limit: 80 });
-    currentPlan = result.plan;
-    renderPlan(currentPlan);
-    await renderMap(currentPlan);
-    planSection.classList.remove("hidden");
+    await applyGeneratedPlan(result.plan, `来自校园群 ${groupId} 总结`);
     alert("已根据校园群聊总结需求并生成路线。");
   } catch (err) {
     alert(`总结失败: ${err.message}`);
@@ -1634,6 +2323,7 @@ chatForm.addEventListener("submit", async (e) => {
   try {
     await api.sendMessage(content);
     chatInput.value = "";
+    markFlowStep("match", "Global 群聊讨论");
   } catch (err) {
     alert(`发送失败: ${err.message}`);
   }
@@ -1656,7 +2346,9 @@ travelForm.addEventListener("submit", async (e) => {
   try {
     await api.createTravelPost(payload);
     travelForm.reset();
+    closeComposeCardForElement(travelForm);
     await loadTravelPosts();
+    markFlowStep("discover", `跨国行程 ${payload.toCity || payload.toCountry || ""}`);
     alert("行程已发布。");
   } catch (err) {
     alert(`发布失败: ${err.message}`);
@@ -1685,13 +2377,11 @@ if (docRouteForm) {
       documentText: String(data.documentText || "").trim(),
     };
     try {
+      markFlowStep("discover", `${payload.city} 文档抽点`);
       const result = await api.generateDocRoute(payload);
-      currentPlan = result.plan;
-      renderPlan(currentPlan);
-      renderDocRouteMeta(currentPlan);
-      await renderMap(currentPlan);
-      planSection.classList.remove("hidden");
-      activitySection.classList.add("hidden");
+      renderDocRouteMeta(result.plan);
+      await applyGeneratedPlan(result.plan, `文档路线：${payload.city}`);
+      closeComposeCardForElement(docRouteForm);
       alert("已根据文档逐点生成路线。");
     } catch (err) {
       alert(`文档路线生成失败: ${err.message}`);
@@ -1728,13 +2418,12 @@ if (imageRouteForm) {
         endDate: String(data.endDate || "").trim(),
         imageDataUrl,
       };
+      markFlowStep("discover", `${payload.city} 图片抽点`);
       const result = await api.generateImageRoute(payload);
-      currentPlan = result.plan;
-      renderPlan(currentPlan);
-      renderDocRouteMeta(currentPlan);
-      await renderMap(currentPlan);
-      planSection.classList.remove("hidden");
-      activitySection.classList.add("hidden");
+      renderDocRouteMeta(result.plan);
+      await applyGeneratedPlan(result.plan, `图片路线：${payload.city}`);
+      imageRouteForm.reset();
+      closeComposeCardForElement(imageRouteForm);
       alert("已根据图片生成路线。");
     } catch (err) {
       alert(`图片路线生成失败: ${err.message}`);
@@ -1745,18 +2434,20 @@ if (imageRouteForm) {
 travelList.addEventListener("click", async (e) => {
   const joinBtn = e.target.closest(".travel-join-btn");
   const routeBtn = e.target.closest(".travel-route-btn");
-  if (!joinBtn && !routeBtn) return;
+  const discussBtn = e.target.closest(".travel-discuss-btn");
+  if (!joinBtn && !routeBtn && !discussBtn) return;
   if (!currentUser) {
     alert("请先登录后加入。");
     return;
   }
-  const postId = (joinBtn || routeBtn).getAttribute("data-post-id");
+  const postId = (joinBtn || routeBtn || discussBtn).getAttribute("data-post-id");
   if (!postId) return;
 
   if (joinBtn) {
     try {
       await api.joinTravelPost(postId);
       await loadTravelPosts();
+      markFlowStep("join", `加入行程 ${postId.slice(-6)}`);
       alert("已加入该行程。");
     } catch (err) {
       alert(`加入失败: ${err.message}`);
@@ -1767,15 +2458,19 @@ travelList.addEventListener("click", async (e) => {
   if (routeBtn) {
     try {
       const result = await api.generateTravelRoute(postId);
-      currentPlan = result.plan;
-      renderPlan(currentPlan);
-      await renderMap(currentPlan);
-      planSection.classList.remove("hidden");
-      activitySection.classList.add("hidden");
+      markFlowStep("discover", `旅行贴 ${postId.slice(-6)}`);
+      await applyGeneratedPlan(result.plan, "跨国旅行路线");
       alert("已生成跨国旅行路线（第1天预览）。");
     } catch (err) {
       alert(`生成失败: ${err.message}`);
     }
+    return;
+  }
+
+  if (discussBtn) {
+    const city = discussBtn.getAttribute("data-post-city") || "";
+    const country = discussBtn.getAttribute("data-post-country") || "";
+    await startBuddyDiscussion(`${city}${country ? `, ${country}` : ""} 跨国行程，找搭子一起规划。`);
   }
 });
 
@@ -1793,7 +2488,9 @@ communityForm.addEventListener("submit", async (e) => {
       campusOnly: data.campusOnly === "true",
     });
     communityForm.reset();
+    closeComposeCardForElement(communityForm);
     await loadInterestGroups();
+    markFlowStep("discover", `${data.city} ${data.interest}`);
     alert("兴趣社群已创建。");
   } catch (err) {
     alert(`创建失败: ${err.message}`);
@@ -1809,15 +2506,28 @@ communityRefreshBtn.addEventListener("click", async () => {
 });
 
 communityList.addEventListener("click", async (e) => {
-  const btn = e.target.closest(".interest-join-btn");
-  if (!btn) return;
+  const joinBtn = e.target.closest(".interest-join-btn");
+  const chatBtn = e.target.closest(".interest-chat-btn");
+  if (!joinBtn && !chatBtn) return;
   if (!currentUser) return alert("请先登录。");
-  const groupId = btn.getAttribute("data-group-id");
+  const sourceBtn = joinBtn || chatBtn;
+  const groupId = sourceBtn.getAttribute("data-group-id");
   if (!groupId) return;
   try {
-    await api.joinInterestGroup(groupId);
+    const joined = await api.joinInterestGroup(groupId);
     await loadInterestGroups();
-    alert("已加入兴趣社群。");
+    if (joinBtn) {
+      markFlowStep("match", `加入社群 ${joined.name || groupId}`);
+      alert("已加入兴趣社群。");
+      return;
+    }
+    if (chatBtn) {
+      const groupName = chatBtn.getAttribute("data-group-name") || joined.name || groupId;
+      navigateToScreen("social", "social-section");
+      await openChatTarget({ type: "interest", id: groupId, name: `兴趣群 · ${groupName}` });
+      appendSnippetToThreadInput("日期：\n预算：\n必去点：\n集合点：");
+      markFlowStep("match", `兴趣群 ${groupName}`);
+    }
   } catch (err) {
     alert(`加入失败: ${err.message}`);
   }
@@ -1845,7 +2555,9 @@ eventForm.addEventListener("submit", async (e) => {
         .filter(Boolean),
     });
     eventForm.reset();
+    closeComposeCardForElement(eventForm);
     await loadLocalEvents();
+    markFlowStep("discover", `${data.city} 活动发布`);
     alert("活动发布成功。");
   } catch (err) {
     alert(`发布失败: ${err.message}`);
@@ -1861,15 +2573,46 @@ eventRefreshBtn.addEventListener("click", async () => {
 });
 
 eventList.addEventListener("click", async (e) => {
-  const btn = e.target.closest(".event-rsvp-btn");
-  if (!btn) return;
+  const rsvpBtn = e.target.closest(".event-rsvp-btn");
+  const planBtn = e.target.closest(".event-plan-btn");
+  const buddyBtn = e.target.closest(".event-buddy-btn");
+
+  if (planBtn) {
+    const seed = {
+      title: planBtn.getAttribute("data-event-title") || "",
+      city: planBtn.getAttribute("data-event-city") || "",
+      country: planBtn.getAttribute("data-event-country") || "",
+      category: planBtn.getAttribute("data-event-category") || "",
+      description: planBtn.getAttribute("data-event-desc") || "",
+    };
+    const intent = buildIntentFromSeed(seed);
+    applyIntentToForm(intent);
+    markFlowStep("discover", `${seed.city || "活动"} · ${seed.title}`);
+    try {
+      const plan = await api.generatePlan(intent);
+      await applyGeneratedPlan(plan, `来自活动：${seed.title}`);
+    } catch (err) {
+      alert(`生成失败: ${err.message}`);
+    }
+    return;
+  }
+
+  if (buddyBtn) {
+    const title = buddyBtn.getAttribute("data-event-title") || "活动";
+    markFlowStep("discover", title);
+    await startBuddyDiscussion(`${title}，有人一起吗？`);
+    return;
+  }
+
+  if (!rsvpBtn) return;
   if (!currentUser) return alert("请先登录。");
-  const eventId = btn.getAttribute("data-event-id");
-  const status = btn.getAttribute("data-status");
+  const eventId = rsvpBtn.getAttribute("data-event-id");
+  const status = rsvpBtn.getAttribute("data-status");
   if (!eventId || !status) return;
   try {
     await api.rsvpLocalEvent(eventId, status);
     await loadLocalEvents();
+    markFlowStep("join", `${status === "going" ? "我要去" : "感兴趣"} · ${eventId.slice(-6)}`);
   } catch (err) {
     alert(`报名失败: ${err.message}`);
   }
@@ -1895,6 +2638,7 @@ inspirationForm.addEventListener("submit", async (e) => {
       content: data.content,
     });
     inspirationForm.reset();
+    closeComposeCardForElement(inspirationForm);
     await loadInspirations();
     alert("灵感内容已发布。");
   } catch (err) {
@@ -1913,7 +2657,8 @@ inspirationRefreshBtn.addEventListener("click", async () => {
 inspirationList.addEventListener("click", async (e) => {
   const likeBtn = e.target.closest(".inspiration-like-btn");
   const planBtn = e.target.closest(".inspiration-plan-btn");
-  if (!likeBtn && !planBtn) return;
+  const buddyBtn = e.target.closest(".inspiration-buddy-btn");
+  if (!likeBtn && !planBtn && !buddyBtn) return;
 
   if (likeBtn) {
     if (!currentUser) return alert("请先登录。");
@@ -1940,14 +2685,19 @@ inspirationList.addEventListener("click", async (e) => {
       area: areaFromCity(city),
     };
     try {
-      currentPlan = await api.generatePlan(intent);
-      renderPlan(currentPlan);
-      await renderMap(currentPlan);
-      planSection.classList.remove("hidden");
-      activitySection.classList.add("hidden");
+      markFlowStep("discover", `灵感同款 ${city || ""}`);
+      const plan = await api.generatePlan(intent);
+      await applyGeneratedPlan(plan, "来自灵感同款");
     } catch (err) {
       alert(`生成失败: ${err.message}`);
     }
+    return;
+  }
+
+  if (buddyBtn) {
+    const title = buddyBtn.getAttribute("data-ins-title") || "灵感路线";
+    markFlowStep("discover", title);
+    await startBuddyDiscussion(`想按「${title}」走一条路线，来找搭子。`);
   }
 });
 
@@ -1962,11 +2712,155 @@ discoverForm.addEventListener("submit", async (e) => {
       category: data.category,
       limit: data.limit,
     });
+    lastDiscoverContext = {
+      city: String(data.city || "").trim(),
+      country: String(data.country || "").trim(),
+      category: String(data.category || "").trim(),
+      q: String(data.q || "").trim(),
+    };
+    markFlowStep("discover", `${lastDiscoverContext.city || "附近"} · ${lastDiscoverContext.q || "地点发现"}`);
     renderDiscoverPlaces(places);
+    closeComposeCardForElement(discoverForm);
   } catch (err) {
     alert(`搜索失败: ${err.message}`);
   }
 });
+
+discoverList.addEventListener("click", async (e) => {
+  const planBtn = e.target.closest(".discover-plan-btn");
+  const buddyBtn = e.target.closest(".discover-buddy-btn");
+  if (!planBtn && !buddyBtn) return;
+
+  if (planBtn) {
+    const seed = {
+      title: planBtn.getAttribute("data-place-name") || "",
+      city: planBtn.getAttribute("data-place-city") || lastDiscoverContext.city,
+      country: planBtn.getAttribute("data-place-country") || lastDiscoverContext.country,
+      category: lastDiscoverContext.category,
+      description: planBtn.getAttribute("data-place-intro") || "",
+    };
+    const intent = buildIntentFromSeed(seed);
+    applyIntentToForm(intent);
+    markFlowStep("discover", `${seed.city || "附近"} · ${seed.title}`);
+    try {
+      const plan = await api.generatePlan(intent);
+      await applyGeneratedPlan(plan, `来自附近发现：${seed.title}`);
+    } catch (err) {
+      alert(`生成失败: ${err.message}`);
+    }
+    return;
+  }
+
+  if (buddyBtn) {
+    const placeName = buddyBtn.getAttribute("data-place-name") || "附近地点";
+    markFlowStep("discover", placeName);
+    await startBuddyDiscussion(`想去 ${placeName}，找搭子一起。`);
+  }
+});
+
+if (officialRefreshBtn) {
+  officialRefreshBtn.addEventListener("click", async () => {
+    try {
+      await loadAggregatedFeed();
+    } catch (err) {
+      alert(`刷新失败: ${err.message}`);
+    }
+  });
+}
+
+if (officialFilterQ) {
+  officialFilterQ.addEventListener("keydown", async (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    try {
+      await loadAggregatedFeed();
+    } catch (err) {
+      alert(`筛选失败: ${err.message}`);
+    }
+  });
+}
+
+if (officialFeedList) {
+  officialFeedList.addEventListener("click", async (e) => {
+    const planBtn = e.target.closest(".feed-plan-btn");
+    const buddyBtn = e.target.closest(".feed-buddy-btn");
+    if (!planBtn && !buddyBtn) return;
+
+    if (planBtn) {
+      const seed = {
+        title: planBtn.getAttribute("data-feed-title") || "",
+        city: planBtn.getAttribute("data-feed-city") || "",
+        country: planBtn.getAttribute("data-feed-country") || "",
+        category: planBtn.getAttribute("data-feed-category") || "",
+        tags: planBtn.getAttribute("data-feed-tags") || "",
+        description: planBtn.getAttribute("data-feed-desc") || "",
+      };
+      const intent = buildIntentFromSeed(seed);
+      applyIntentToForm(intent);
+      markFlowStep("discover", `${seed.city || "聚合内容"} · ${seed.title}`);
+      try {
+        const plan = await api.generatePlan(intent);
+        await applyGeneratedPlan(plan, `来自聚合信息：${seed.title}`);
+      } catch (err) {
+        alert(`生成失败: ${err.message}`);
+      }
+      return;
+    }
+
+    if (buddyBtn) {
+      const title = buddyBtn.getAttribute("data-feed-title") || "聚合活动";
+      markFlowStep("discover", title);
+      await startBuddyDiscussion(`看到一个活动：${title}，有兴趣一起去吗？`);
+    }
+  });
+}
+
+if (exploreTabs) {
+  exploreTabs.addEventListener("click", (e) => {
+    const btn = e.target.closest(".explore-tab-btn[data-explore-target]");
+    if (!btn) return;
+    const panel = btn.getAttribute("data-explore-target");
+    if (!panel || !EXPLORE_PANELS.has(panel)) return;
+    setExplorePanel(panel, true, true);
+    if (window.location.hash.replace("#", "") === "explore") {
+      const sectionId = EXPLORE_SECTION_MAP[panel];
+      const section = sectionId ? document.getElementById(sectionId) : null;
+      if (section) section.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  });
+}
+
+if (exploreBackFlowBtn) {
+  exploreBackFlowBtn.addEventListener("click", () => {
+    navigateToScreen("plan", "workflow-section");
+  });
+}
+
+window.addEventListener("hashchange", () => {
+  syncExploreFloatingButton();
+  syncTopbarScreen();
+  const screen = window.location.hash.replace("#", "") || "plan";
+  if (screen === "explore") {
+    maybeApplyRecommendedExplorePanel(false);
+  }
+});
+
+if (flowGoDiscoverBtn) flowGoDiscoverBtn.addEventListener("click", () => jumpToFlowStep("discover"));
+if (flowGoMatchBtn) flowGoMatchBtn.addEventListener("click", () => jumpToFlowStep("match"));
+if (flowGoPlanBtn) flowGoPlanBtn.addEventListener("click", () => jumpToFlowStep("plan"));
+if (flowGoLaunchBtn) flowGoLaunchBtn.addEventListener("click", () => jumpToFlowStep("launch"));
+if (flowGoJoinBtn) flowGoJoinBtn.addEventListener("click", () => jumpToFlowStep("join"));
+if (flowNextBtn) {
+  flowNextBtn.addEventListener("click", () => {
+    const nextStep = flowNextBtn.getAttribute("data-next-step");
+    if (nextStep) jumpToFlowStep(nextStep);
+  });
+}
+if (flowResetBtn) {
+  flowResetBtn.addEventListener("click", () => {
+    resetFlowState();
+  });
+}
 
 collabTripForm.addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -1986,7 +2880,9 @@ collabTripForm.addEventListener("submit", async (e) => {
         .filter(Boolean),
     });
     collabTripForm.reset();
+    closeComposeCardForElement(collabTripForm);
     await loadCollabTrips();
+    markFlowStep("discover", `协同行程 ${data.destinationCity || ""}`);
     alert("协同行程已创建。");
   } catch (err) {
     alert(`创建失败: ${err.message}`);
@@ -2007,6 +2903,7 @@ collabItemForm.addEventListener("submit", async (e) => {
       bookingType: data.bookingType,
     });
     collabItemForm.reset();
+    closeComposeCardForElement(collabItemForm);
     await loadCollabTrips();
     alert("已添加行程项。");
   } catch (err) {
@@ -2029,6 +2926,7 @@ collabExpenseForm.addEventListener("submit", async (e) => {
         .filter(Boolean),
     });
     collabExpenseForm.reset();
+    closeComposeCardForElement(collabExpenseForm);
     await loadCollabTrips();
     alert("费用已记录。");
   } catch (err) {
@@ -2043,6 +2941,7 @@ collabImportForm.addEventListener("submit", async (e) => {
   try {
     await api.importReservation(data.tripId, data.text);
     collabImportForm.reset();
+    closeComposeCardForElement(collabImportForm);
     await loadCollabTrips();
     alert("预订信息已导入。");
   } catch (err) {
@@ -2070,6 +2969,7 @@ collabList.addEventListener("click", async (e) => {
     try {
       await api.joinCollabTrip(tripId);
       await loadCollabTrips();
+      markFlowStep("join", `加入协同 ${tripId.slice(-6)}`);
       alert("已加入协同行程。");
     } catch (err) {
       alert(`加入失败: ${err.message}`);
@@ -2095,11 +2995,8 @@ form.addEventListener("submit", async (e) => {
   const intent = Object.fromEntries(data.entries());
   try {
     await api.logEvent("input_submit", intent);
-    currentPlan = await api.generatePlan(intent);
-    renderPlan(currentPlan);
-    renderMap(currentPlan);
-    planSection.classList.remove("hidden");
-    activitySection.classList.add("hidden");
+    const plan = await api.generatePlan(intent);
+    await applyGeneratedPlan(plan, "手动输入需求");
     currentActivity = null;
     await refreshEvents();
   } catch (err) {
@@ -2114,6 +3011,7 @@ createActivityBtn.addEventListener("click", async () => {
     currentActivity.link = `${location.origin}${location.pathname}?join=${currentActivity.joinToken}`;
     renderActivity(currentActivity);
     activitySection.classList.remove("hidden");
+    navigateToScreen("plan", "activity-section");
     await refreshEvents();
   } catch (err) {
     alert(`发起失败: ${err.message}`);
@@ -2135,6 +3033,7 @@ shareBtn.addEventListener("click", async () => {
       alert("当前环境不支持系统分享，已复制到剪贴板。");
     }
     await api.logEvent("shared", { code: currentActivity.code, method: "share" });
+    markFlowStep("join", "已分享活动链接");
     await refreshEvents();
   } catch (err) {
     console.error(err);
@@ -2146,6 +3045,7 @@ copyBtn.addEventListener("click", async () => {
   await navigator.clipboard.writeText(currentActivity.link);
   alert("链接已复制。");
   await api.logEvent("shared", { code: currentActivity.code, method: "copy_link" });
+  markFlowStep("join", "已复制并可报名");
   await refreshEvents();
 });
 
@@ -2174,6 +3074,7 @@ async function restoreSession() {
     await loadInterestGroups();
     await loadLocalEvents();
     await loadInspirations();
+    await loadAggregatedFeed().catch(() => {});
     await loadCollabTrips();
     connectChatSocket();
   } catch (_err) {
@@ -2194,9 +3095,17 @@ async function boot() {
   await loadInterestGroups();
   await loadLocalEvents();
   await loadInspirations();
+  await loadAggregatedFeed().catch(() => {});
   await loadCollabTrips();
   await refreshEvents();
   await renderDefaultGlobalMap();
+  renderFlowState();
 }
 
+const savedExplorePanel = localStorage.getItem("explore_panel") || "official";
+setExplorePanel(EXPLORE_PANELS.has(savedExplorePanel) ? savedExplorePanel : "official", false);
+maybeApplyRecommendedExplorePanel(true);
+renderFlowState();
+syncExploreFloatingButton();
+syncTopbarScreen();
 boot();
