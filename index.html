@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI 活动发起器 Demo</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;700;800&family=Noto+Sans+SC:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="hero">
+        <p class="eyebrow">Founder MVP Demo</p>
+        <h1>AI 活动发起器</h1>
+        <p class="subtitle">把“今天去哪”变成“可执行活动方案”，并直接在地图里出发</p>
+        <div class="hero-chips">
+          <span>意图解析</span>
+          <span>路线生成</span>
+          <span>活动发起</span>
+          <span>Google 地图</span>
+        </div>
+      </header>
+
+      <section class="card">
+        <h2>1) 输入活动需求</h2>
+        <form id="intent-form" class="form-grid">
+          <label>
+            你和谁去
+            <select name="companion" required>
+              <option value="朋友">朋友</option>
+              <option value="同学">同学</option>
+              <option value="情侣">情侣</option>
+              <option value="独自">独自</option>
+            </select>
+          </label>
+
+          <label>
+            人数
+            <input name="people" type="number" min="1" max="20" value="2" required />
+          </label>
+
+          <label>
+            预算（SGD/人）
+            <select name="budget" required>
+              <option value="低预算">低预算（0-20）</option>
+              <option value="中预算" selected>中预算（20-50）</option>
+              <option value="高预算">高预算（50+）</option>
+            </select>
+          </label>
+
+          <label>
+            时间段
+            <select name="timeSlot" required>
+              <option value="今天晚上">今天晚上</option>
+              <option value="周末半天">周末半天</option>
+              <option value="周末全天">周末全天</option>
+            </select>
+          </label>
+
+          <label>
+            兴趣偏好
+            <select name="interest" required>
+              <option value="city walk">City Walk</option>
+              <option value="看展">看展</option>
+              <option value="咖啡">咖啡</option>
+              <option value="美食">美食</option>
+              <option value="ACG">ACG</option>
+            </select>
+          </label>
+
+          <label>
+            地理范围
+            <select name="area" required>
+              <option value="NTU附近">NTU附近</option>
+              <option value="新加坡市中心">新加坡市中心</option>
+              <option value="东海岸">东海岸</option>
+            </select>
+          </label>
+
+          <button type="submit" class="btn-primary">AI 生成活动方案</button>
+        </form>
+      </section>
+
+      <div class="split-layout">
+        <section id="plan-section" class="card hidden">
+          <h2>2) 结构化活动方案</h2>
+          <article id="plan-output" class="plan"></article>
+          <button id="create-activity" class="btn-primary">一键发起活动</button>
+        </section>
+
+        <section id="map-section" class="card hidden">
+          <h2>路线地图（Google Maps）</h2>
+          <p id="map-status" class="map-status hidden"></p>
+          <div class="map-wrap">
+            <div id="route-map" aria-label="Route Map"></div>
+          </div>
+          <div id="map-links" class="map-links"></div>
+        </section>
+      </div>
+
+      <section id="activity-section" class="card hidden">
+        <h2>3) 活动发起与分享</h2>
+        <article id="activity-output" class="activity"></article>
+        <div class="actions">
+          <button id="share-btn" class="btn-primary">分享给朋友</button>
+          <button id="copy-btn" class="btn-secondary">复制链接</button>
+        </div>
+      </section>
+
+      <section class="card small">
+        <h2>事件埋点（Demo）</h2>
+        <pre id="events-log">[]</pre>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
