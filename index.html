@@ -26,7 +26,7 @@
         </div>
       </header>
 
-      <section class="card">
+      <section class="card mobile-screen-section" data-screen="plan">
         <h2>1) 输入活动需求</h2>
         <form id="intent-form" class="form-grid">
           <label>
@@ -86,56 +86,310 @@
         </form>
       </section>
 
-      <section class="card" id="auth-section">
-        <h2>账号系统</h2>
-        <p id="auth-status" class="meta">未登录</p>
+      <section class="card mobile-screen-section" data-screen="social" id="auth-section">
+        <h2>账号系统（多方式登录）</h2>
+        <div class="auth-status-row">
+          <p id="auth-status" class="meta">未登录</p>
+          <button id="logout-btn" class="btn-secondary hidden" type="button">退出登录</button>
+        </div>
         <div class="auth-grid">
           <form id="register-form" class="auth-form">
-            <h3>注册</h3>
+            <h3>密码注册</h3>
             <input name="displayName" placeholder="昵称" required />
             <input name="username" placeholder="用户名（唯一）" required />
+            <input name="email" type="email" placeholder="邮箱（可选）" />
             <input name="password" type="password" placeholder="密码（至少6位）" required />
             <button type="submit" class="btn-primary">注册</button>
           </form>
           <form id="login-form" class="auth-form">
-            <h3>登录</h3>
-            <input name="username" placeholder="用户名" required />
+            <h3>密码登录</h3>
+            <input name="identifier" placeholder="用户名或邮箱" required />
             <input name="password" type="password" placeholder="密码" required />
             <button type="submit" class="btn-primary">登录</button>
           </form>
         </div>
-        <div class="actions">
-          <button id="logout-btn" class="btn-secondary hidden" type="button">退出登录</button>
+        <form id="code-login-form" class="auth-form auth-code-form">
+          <h3>验证码登录 / 注册</h3>
+          <input name="identifier" placeholder="邮箱或手机号" required />
+          <div class="auth-inline">
+            <input name="code" placeholder="验证码" required />
+            <button id="request-code-btn" type="button" class="btn-secondary">获取验证码</button>
+          </div>
+          <input name="displayName" placeholder="首次登录昵称（可选）" />
+          <button type="submit" class="btn-primary">验证码登录</button>
+        </form>
+        <div class="oauth-wrap">
+          <p class="meta auth-meta">其他登录方式</p>
+          <div class="oauth-row">
+            <button class="btn-secondary oauth-btn" type="button" data-provider="google">Google 登录</button>
+            <button class="btn-secondary oauth-btn" type="button" data-provider="apple">Apple 登录</button>
+            <button class="btn-secondary oauth-btn" type="button" data-provider="wechat">微信登录</button>
+            <button class="btn-secondary oauth-btn" type="button" data-provider="github">GitHub 登录</button>
+          </div>
         </div>
       </section>
 
-      <section class="card hidden" id="im-section">
+      <section class="card hidden mobile-screen-section" data-screen="legacy" id="im-section">
         <h2>IM 聊天（Global Room）</h2>
         <div id="chat-messages" class="chat-messages"></div>
         <form id="chat-form" class="chat-form">
           <input id="chat-input" name="content" placeholder="输入消息..." required />
           <button type="submit" class="btn-primary">发送</button>
         </form>
+        <div class="actions">
+          <button id="summarize-global-btn" type="button" class="btn-secondary">总结本群需求并生成路线</button>
+        </div>
       </section>
 
-      <div class="split-layout">
-        <section id="plan-section" class="card hidden">
-          <h2>2) 结构化活动方案</h2>
-          <article id="plan-output" class="plan"></article>
-          <button id="create-activity" class="btn-primary">一键发起活动</button>
-        </section>
+      <section class="card mobile-screen-section" data-screen="explore" id="community-section">
+        <h2>Meetup 模式：兴趣社群</h2>
+        <p class="meta">按兴趣和城市找同好社群，支持加入与线下活动组织。</p>
+        <form id="community-form" class="travel-form">
+          <input name="name" placeholder="社群名（如 Tokyo Art Walk）" required />
+          <input name="interest" placeholder="兴趣（如 看展 / city walk / ACG）" required />
+          <input name="city" placeholder="城市（如 Singapore）" required />
+          <input name="country" placeholder="国家（如 Singapore）" required />
+          <input name="description" placeholder="社群介绍" />
+          <label>
+            <span>仅校园认证用户可见</span>
+            <select name="campusOnly">
+              <option value="false">否</option>
+              <option value="true">是</option>
+            </select>
+          </label>
+          <button type="submit" class="btn-primary">创建兴趣社群</button>
+        </form>
+        <div class="travel-filters">
+          <input id="community-filter-city" placeholder="筛选城市" />
+          <input id="community-filter-interest" placeholder="筛选兴趣" />
+          <button id="community-refresh-btn" type="button" class="btn-secondary">刷新社群</button>
+        </div>
+        <div id="community-list" class="travel-list"></div>
+      </section>
 
-        <section id="map-section" class="card hidden">
-          <h2>路线地图（Google Maps）</h2>
-          <p id="map-status" class="map-status hidden"></p>
-          <div class="map-wrap">
-            <div id="route-map" aria-label="Route Map"></div>
-          </div>
-          <div id="map-links" class="map-links"></div>
-        </section>
-      </div>
+      <section class="card mobile-screen-section" data-screen="explore" id="events-section">
+        <h2>Eventbrite 模式：活动发现与报名成团</h2>
+        <p class="meta">支持活动发布、发现、报名（感兴趣/我要去）与票务跳转。</p>
+        <form id="event-form" class="travel-form">
+          <input name="title" placeholder="活动标题" required />
+          <input name="category" placeholder="分类（music/exhibit/food/sports）" required />
+          <input name="city" placeholder="城市" required />
+          <input name="country" placeholder="国家" required />
+          <input name="venueName" placeholder="地点名称" />
+          <input name="startAt" type="datetime-local" required />
+          <input name="endAt" type="datetime-local" required />
+          <input name="price" type="number" step="0.01" min="0" placeholder="票价（可选）" />
+          <input name="currency" placeholder="币种（默认 SGD）" />
+          <input name="ticketUrl" placeholder="票务链接（可选）" />
+          <input name="tags" placeholder="标签（逗号分隔）" />
+          <button type="submit" class="btn-primary">发布活动</button>
+        </form>
+        <div class="travel-filters">
+          <input id="event-filter-city" placeholder="筛选城市" />
+          <input id="event-filter-category" placeholder="筛选分类" />
+          <button id="event-refresh-btn" type="button" class="btn-secondary">刷新活动</button>
+        </div>
+        <div id="event-list" class="travel-list"></div>
+      </section>
 
-      <section id="activity-section" class="card hidden">
+      <section class="card mobile-screen-section" data-screen="explore" id="inspiration-section">
+        <h2>小红书模式：灵感内容流</h2>
+        <p class="meta">发布玩法笔记，点赞互动，并一键转成可执行路线。</p>
+        <form id="inspiration-form" class="travel-form">
+          <input name="title" placeholder="标题（如 东京5天不走回头路）" required />
+          <input name="city" placeholder="城市" required />
+          <input name="country" placeholder="国家" required />
+          <input name="tags" placeholder="标签（逗号分隔）" />
+          <input name="places" placeholder="地点（逗号分隔）" />
+          <textarea name="content" rows="3" placeholder="攻略内容 / 体验总结" required></textarea>
+          <button type="submit" class="btn-primary">发布灵感</button>
+        </form>
+        <div class="travel-filters">
+          <input id="inspiration-filter-city" placeholder="筛选城市" />
+          <input id="inspiration-filter-tag" placeholder="筛选标签" />
+          <button id="inspiration-refresh-btn" type="button" class="btn-secondary">刷新灵感流</button>
+        </div>
+        <div id="inspiration-list" class="travel-list"></div>
+      </section>
+
+      <section class="card mobile-screen-section" data-screen="explore" id="discover-section">
+        <h2>点评/美团模式：本地商户发现（真实地点）</h2>
+        <form id="discover-form" class="travel-form">
+          <input name="q" placeholder="搜索词（如 ramen / cafe / museum）" required />
+          <input name="city" placeholder="城市（如 Tokyo）" required />
+          <input name="country" placeholder="国家（如 Japan）" required />
+          <input name="category" placeholder="品类（restaurant/attraction/hotel）" />
+          <input name="limit" type="number" min="3" max="20" value="8" />
+          <button type="submit" class="btn-primary">搜索真实商户</button>
+        </form>
+        <div id="discover-list" class="travel-list"></div>
+      </section>
+
+      <section class="card mobile-screen-section" data-screen="social" id="social-section">
+        <h2>好友 + 群聊（WhatsApp 风格）</h2>
+        <form id="friend-request-form" class="chat-form">
+          <input name="toUsername" placeholder="输入用户名发送好友请求" required />
+          <button type="submit" class="btn-primary">加好友</button>
+        </form>
+        <div class="chat-hub">
+          <aside class="chat-directory-panel">
+            <h3>好友列表</h3>
+            <div id="friends-list" class="chat-directory-list"></div>
+            <h3>群聊列表</h3>
+            <div id="chat-groups-list" class="chat-directory-list"></div>
+          </aside>
+          <article class="chat-thread-panel">
+            <div class="chat-thread-head">
+              <strong id="chat-thread-title">选择一个聊天</strong>
+              <span id="chat-thread-meta" class="meta">可切换好友私聊 / 群聊</span>
+            </div>
+            <div id="chat-thread-messages" class="chat-messages"></div>
+            <form id="chat-thread-form" class="chat-form">
+              <input id="chat-thread-input" name="content" placeholder="输入消息..." required />
+              <button type="submit" class="btn-primary">发送</button>
+            </form>
+          </article>
+        </div>
+      </section>
+
+      <section class="card mobile-screen-section" data-screen="explore" id="campus-section">
+        <h2>校园认证 + 校园群聊</h2>
+        <form id="campus-verify-form" class="travel-form">
+          <input name="campusEmail" placeholder="校园邮箱（.edu/.ac）" required />
+          <input name="campusName" placeholder="学校名称（如 NTU）" required />
+          <input name="studentId" placeholder="学号（可选）" />
+          <button type="submit" class="btn-primary">完成校园认证</button>
+        </form>
+        <form id="campus-group-create-form" class="travel-form">
+          <input name="name" placeholder="群名称" required />
+          <input name="description" placeholder="群描述" />
+          <input name="geoLabel" placeholder="地理标签（可选）" />
+          <button type="submit" class="btn-primary">创建校园群</button>
+        </form>
+        <div id="campus-groups-list" class="travel-list"></div>
+        <form id="campus-group-message-form" class="travel-form">
+          <input name="groupId" placeholder="群 ID" required />
+          <input name="content" placeholder="群消息内容" required />
+          <input name="geoLabel" placeholder="地理标签（可选）" />
+          <button type="submit" class="btn-primary">发送群消息</button>
+        </form>
+        <div class="actions">
+          <button id="summarize-campus-btn" type="button" class="btn-secondary">总结校园群需求并生成路线</button>
+        </div>
+      </section>
+
+      <section class="card mobile-screen-section" data-screen="travel" id="collab-section">
+        <h2>Wanderlog 模式：协同旅行与AA分账</h2>
+        <p class="meta">实时协同行程点位、导入预订信息、费用分摊与结算建议。</p>
+        <form id="collab-trip-form" class="travel-form">
+          <input name="title" placeholder="行程标题（如 Kansai 6D）" required />
+          <input name="destinationCity" placeholder="目的地城市" required />
+          <input name="destinationCountry" placeholder="目的地国家" required />
+          <input name="startDate" type="date" required />
+          <input name="endDate" type="date" required />
+          <input name="currency" placeholder="币种（默认 SGD）" />
+          <input name="memberIds" placeholder="额外成员ID（逗号分隔，可选）" />
+          <button type="submit" class="btn-primary">创建协同行程</button>
+        </form>
+        <form id="collab-item-form" class="travel-form">
+          <input name="tripId" placeholder="行程ID" required />
+          <input name="day" type="number" min="1" placeholder="第几天" required />
+          <input name="time" placeholder="时间（如 09:30）" />
+          <input name="title" placeholder="行程事项（如 浅草寺）" required />
+          <input name="placeName" placeholder="地点名（可选）" />
+          <input name="bookingUrl" placeholder="预订链接（可选）" />
+          <input name="bookingType" placeholder="类型（flight/hotel/activity）" />
+          <button type="submit" class="btn-primary">添加行程项</button>
+        </form>
+        <form id="collab-expense-form" class="travel-form">
+          <input name="tripId" placeholder="行程ID" required />
+          <input name="title" placeholder="费用项（如 酒店）" required />
+          <input name="amount" type="number" min="0" step="0.01" placeholder="金额" required />
+          <input name="category" placeholder="分类（hotel/food/transport）" />
+          <input name="splitWith" placeholder="分摊成员ID（逗号分隔，不填则全员）" />
+          <button type="submit" class="btn-primary">记录费用</button>
+        </form>
+        <form id="collab-import-form" class="travel-form">
+          <input name="tripId" placeholder="行程ID" required />
+          <textarea name="text" rows="2" placeholder="粘贴预订文本（航班/酒店/门票）" required></textarea>
+          <button type="submit" class="btn-secondary">导入预订到行程</button>
+        </form>
+        <div class="actions">
+          <button id="collab-refresh-btn" type="button" class="btn-secondary">刷新协同行程</button>
+        </div>
+        <div id="collab-list" class="travel-list"></div>
+        <div id="collab-summary" class="travel-list"></div>
+      </section>
+
+      <section class="card mobile-screen-section" data-screen="travel" id="travel-section">
+        <h2>跨国旅行找搭子</h2>
+        <p class="meta">登录后可发布行程并加入他人的跨国旅行计划。</p>
+        <form id="travel-form" class="travel-form">
+          <input name="fromCountry" placeholder="出发国家（如 Singapore）" required />
+          <input name="toCountry" placeholder="目的地国家（如 Japan）" required />
+          <input name="toCity" placeholder="目的地城市（如 Tokyo）" required />
+          <input name="startDate" type="date" required />
+          <input name="endDate" type="date" required />
+          <input name="budget" placeholder="预算（如 SGD 1000）" />
+          <input name="tags" placeholder="标签（逗号分隔：citywalk,food）" />
+          <input name="note" placeholder="备注（偏好/节奏/住宿）" />
+          <button type="submit" class="btn-primary">发布找搭子</button>
+        </form>
+        <div class="travel-filters">
+          <input id="travel-filter-country" placeholder="筛选国家" />
+          <input id="travel-filter-city" placeholder="筛选城市" />
+          <button id="travel-refresh-btn" type="button" class="btn-secondary">刷新列表</button>
+        </div>
+        <div id="travel-list" class="travel-list"></div>
+        <h3>根据文档逐个点生成路线</h3>
+        <p class="meta">粘贴攻略/行程文档，系统会按文档顺序抽点并生成可执行路径。</p>
+        <form id="doc-route-form" class="travel-form">
+          <input name="city" placeholder="文档目的地城市（如 Tokyo）" required />
+          <input name="country" placeholder="文档目的地国家（如 Japan）" required />
+          <input name="interest" placeholder="兴趣（可选，如 美食 / city walk）" />
+          <input name="fromCountry" placeholder="出发国家（可选，生成机票入口）" />
+          <input name="startDate" type="date" />
+          <input name="endDate" type="date" />
+          <textarea
+            name="documentText"
+            class="full-span"
+            rows="6"
+            placeholder="粘贴文档内容，例如：Day1 浅草寺 -> 上野公园 -> 秋叶原；Day2 明治神宫 -> 涩谷 -> 下北泽"
+            required
+          ></textarea>
+          <button type="submit" class="btn-primary full-span">根据文档生成路线</button>
+        </form>
+        <div id="doc-route-points" class="travel-list"></div>
+        <h3>根据图片生成路线</h3>
+        <p class="meta">上传攻略截图/行程图片，系统会识别地点并自动生成路线。</p>
+        <form id="image-route-form" class="travel-form">
+          <input name="city" placeholder="图片目的地城市（如 Tokyo）" required />
+          <input name="country" placeholder="图片目的地国家（如 Japan）" required />
+          <input name="interest" placeholder="兴趣（可选，如 美食 / city walk）" />
+          <input name="fromCountry" placeholder="出发国家（可选，生成机票入口）" />
+          <input name="startDate" type="date" />
+          <input name="endDate" type="date" />
+          <input id="image-route-file" name="imageFile" class="full-span" type="file" accept="image/*" required />
+          <button type="submit" class="btn-primary full-span">根据图片生成路线</button>
+        </form>
+      </section>
+
+      <section id="plan-section" class="card hidden mobile-screen-section" data-screen="plan">
+        <h2>2) 结构化活动方案</h2>
+        <article id="plan-output" class="plan"></article>
+        <button id="create-activity" class="btn-primary">一键发起活动</button>
+      </section>
+
+      <section id="map-section" class="card route-map-global">
+        <h2>路线地图（Google Maps）</h2>
+        <p id="map-status" class="map-status hidden"></p>
+        <div class="map-wrap">
+          <div id="route-map" aria-label="Route Map"></div>
+        </div>
+        <div id="map-links" class="map-links"></div>
+      </section>
+
+      <section id="activity-section" class="card hidden mobile-screen-section" data-screen="plan">
         <h2>3) 活动发起与分享</h2>
         <article id="activity-output" class="activity"></article>
         <div class="actions">
@@ -144,13 +398,21 @@
         </div>
       </section>
 
-      <section class="card small">
+      <section class="card small mobile-screen-section" data-screen="plan">
         <h2>事件埋点（Demo）</h2>
         <pre id="events-log">[]</pre>
       </section>
+
+      <nav class="mobile-tabbar">
+        <button type="button" class="mobile-tab active" data-screen-target="plan">首页</button>
+        <button type="button" class="mobile-tab" data-screen-target="social">社交</button>
+        <button type="button" class="mobile-tab" data-screen-target="explore">发现</button>
+        <button type="button" class="mobile-tab" data-screen-target="travel">旅行</button>
+      </nav>
     </main>
 
     <script src="/socket.io/socket.io.js"></script>
     <script src="./app.js"></script>
+    <script src="./mobile-nav.js"></script>
   </body>
 </html>
