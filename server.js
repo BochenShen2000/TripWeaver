@@ -1321,9 +1321,14 @@ async function buildRouteFromDocument(payload) {
       websiteUri: enriched.websiteUri || null,
       rating: enriched.rating || null,
       userRatingCount: enriched.userRatingCount || null,
+      priceLevel: enriched.priceLevel || null,
+      openNow: typeof enriched.openNow === "boolean" ? enriched.openNow : null,
       intro: enriched.intro || "",
       ticketing: enriched.ticketing || { required: false, confidence: "low" },
       booking: enriched.booking || null,
+      vibeTags: enriched.vibeTags || [],
+      allure: enriched.allure || null,
+      coverImageUrl: enriched.coverImageUrl || null,
     });
   }
 
@@ -1414,7 +1419,7 @@ async function googlePlacesSearch(query, options = {}) {
         "Content-Type": "application/json",
         "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY,
         "X-Goog-FieldMask":
-          "places.id,places.displayName,places.formattedAddress,places.location,places.types,places.primaryType,places.rating,places.userRatingCount,places.googleMapsUri",
+          "places.id,places.displayName,places.formattedAddress,places.location,places.types,places.primaryType,places.rating,places.userRatingCount,places.googleMapsUri,places.photos,places.priceLevel",
       },
       body: JSON.stringify({
         textQuery: query,
@@ -1428,20 +1433,26 @@ async function googlePlacesSearch(query, options = {}) {
     const places = Array.isArray(data.places) ? data.places : [];
     return places
       .filter((p) => p.location && Number.isFinite(p.location.latitude) && Number.isFinite(p.location.longitude))
-      .map((p) => ({
-        point: p.displayName?.text || p.formattedAddress || "Unknown Place",
-        matchedName: p.formattedAddress || p.displayName?.text || "Unknown Place",
-        lat: p.location.latitude,
-        lng: p.location.longitude,
-        verified: true,
-        source: "Google Places API",
-        placeId: p.id || null,
-        primaryType: p.primaryType || null,
-        types: Array.isArray(p.types) ? p.types : [],
-        googleMapsUri: p.googleMapsUri || null,
-        rating: p.rating || null,
-        userRatingCount: p.userRatingCount || null,
-      }));
+      .map((p) => {
+        const photoName = Array.isArray(p.photos) && p.photos.length ? p.photos[0].name || null : null;
+        return {
+          point: p.displayName?.text || p.formattedAddress || "Unknown Place",
+          matchedName: p.formattedAddress || p.displayName?.text || "Unknown Place",
+          lat: p.location.latitude,
+          lng: p.location.longitude,
+          verified: true,
+          source: "Google Places API",
+          placeId: p.id || null,
+          primaryType: p.primaryType || null,
+          types: Array.isArray(p.types) ? p.types : [],
+          googleMapsUri: p.googleMapsUri || null,
+          rating: p.rating || null,
+          userRatingCount: p.userRatingCount || null,
+          priceLevel: p.priceLevel || null,
+          photoName,
+          photoUrl: buildPlacePhotoUrl(photoName, 880),
+        };
+      });
   } catch (_err) {
     return [];
   }
@@ -1455,7 +1466,7 @@ async function googlePlaceDetails(placeId) {
       headers: {
         "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY,
         "X-Goog-FieldMask":
-          "id,displayName,formattedAddress,googleMapsUri,websiteUri,editorialSummary,primaryType,types,rating,userRatingCount",
+          "id,displayName,formattedAddress,googleMapsUri,websiteUri,editorialSummary,primaryType,types,rating,userRatingCount,priceLevel,regularOpeningHours.openNow,photos",
       },
     });
     if (!response.ok) return null;
@@ -1471,6 +1482,10 @@ async function googlePlaceDetails(placeId) {
       types: Array.isArray(data.types) ? data.types : [],
       rating: data.rating || null,
       userRatingCount: data.userRatingCount || null,
+      priceLevel: data.priceLevel || null,
+      openNow: typeof data.regularOpeningHours?.openNow === "boolean" ? data.regularOpeningHours.openNow : null,
+      photoName: Array.isArray(data.photos) && data.photos.length ? data.photos[0].name || null : null,
+      photoUrl: buildPlacePhotoUrl(Array.isArray(data.photos) && data.photos.length ? data.photos[0].name || null : null, 1080),
     };
   } catch (_err) {
     return null;
@@ -1527,6 +1542,56 @@ function inferTicketing(types = [], primaryType = "", name = "") {
     required: likelyPaid || maybePaid,
     confidence: likelyPaid ? "high" : maybePaid ? "medium" : "low",
   };
+}
+
+function buildPlacePhotoUrl(photoName, maxWidthPx = 1080) {
+  if (!GOOGLE_MAPS_API_KEY || !photoName) return null;
+  const safeName = String(photoName)
+    .split("/")
+    .map((seg) => encodeURIComponent(seg))
+    .join("/");
+  const width = Math.min(Math.max(Number(maxWidthPx) || 1080, 320), 1600);
+  return `https://places.googleapis.com/v1/${safeName}/media?maxWidthPx=${width}&key=${encodeURIComponent(GOOGLE_MAPS_API_KEY)}`;
+}
+
+function buildStaticMapPreviewUrl(lat, lng, label = "") {
+  if (!GOOGLE_MAPS_API_KEY || !Number.isFinite(Number(lat)) || !Number.isFinite(Number(lng))) return null;
+  const center = `${Number(lat)},${Number(lng)}`;
+  const markerLabel = String(label || "P").trim().slice(0, 1).toUpperCase() || "P";
+  return `https://maps.googleapis.com/maps/api/staticmap?size=1200x620&scale=2&zoom=14&center=${encodeURIComponent(
+    center,
+  )}&markers=color:0x0f4c81%7Clabel:${encodeURIComponent(markerLabel)}%7C${encodeURIComponent(
+    center,
+  )}&key=${encodeURIComponent(GOOGLE_MAPS_API_KEY)}`;
+}
+
+function derivePlaceVibeTags(place = {}, ticketing = { required: false }) {
+  const tags = [];
+  if (Number(place.rating) >= 4.6) tags.push("高评分");
+  if (Number(place.userRatingCount) >= 800) tags.push("高热度");
+  if (place.openNow === true) tags.push("当前营业");
+  const typeText = `${place.primaryType || ""} ${(place.types || []).join(" ")}`.toLowerCase();
+  if (/museum|art_gallery|tourist_attraction|historic|landmark|theme_park|zoo|aquarium/.test(typeText)) tags.push("出片地标");
+  if (/restaurant|cafe|food|bakery|meal/.test(typeText)) tags.push("人气美食");
+  if (ticketing?.required) tags.push("可购票");
+  if (place.photoUrl) tags.push("实拍封面");
+  return tags.slice(0, 4);
+}
+
+function computePlaceAllure(place = {}, ticketing = { required: false }) {
+  const rating = Number(place.rating);
+  const votes = Number(place.userRatingCount);
+  const scoreBase = 28;
+  const ratingScore = Number.isFinite(rating) ? Math.min(42, Math.max(0, rating) * 8.5) : 10;
+  const voteScore = Number.isFinite(votes) && votes > 0 ? Math.min(18, Math.log10(votes + 1) * 8) : 0;
+  const photoScore = place.photoUrl ? 12 : 0;
+  const ticketScore = ticketing?.required ? 3 : 0;
+  const openNowScore = place.openNow === true ? 5 : 0;
+  const total = Math.round(Math.max(20, Math.min(99, scoreBase + ratingScore + voteScore + photoScore + ticketScore + openNowScore)));
+  let level = "精选";
+  if (total >= 86) level = "必去";
+  else if (total >= 74) level = "推荐";
+  return { score: total, level };
 }
 
 function buildTicketLinks(placeName, city, country, websiteUri) {
@@ -1604,6 +1669,10 @@ async function enrichPlaceForItinerary(place, context = {}) {
     rating: details?.rating || place.rating || null,
     userRatingCount: details?.userRatingCount || place.userRatingCount || null,
     editorialSummary: details?.editorialSummary || null,
+    priceLevel: details?.priceLevel || place.priceLevel || null,
+    openNow: typeof details?.openNow === "boolean" ? details.openNow : typeof place.openNow === "boolean" ? place.openNow : null,
+    photoName: details?.photoName || place.photoName || null,
+    photoUrl: details?.photoUrl || place.photoUrl || null,
   };
 
   const intro = await generatePlaceIntro(
@@ -1618,12 +1687,20 @@ async function enrichPlaceForItinerary(place, context = {}) {
   );
   const ticketing = inferTicketing(merged.types, merged.primaryType, merged.point);
   const booking = buildTicketLinks(merged.point, context.city || "", context.country || "", merged.websiteUri);
+  const vibeTags = derivePlaceVibeTags(merged, ticketing);
+  const allure = computePlaceAllure(merged, ticketing);
+  const coverImageUrl =
+    merged.photoUrl ||
+    buildStaticMapPreviewUrl(merged.lat, merged.lng, String(merged.point || "").trim().slice(0, 1).toUpperCase() || "P");
 
   return {
     ...merged,
     intro,
     ticketing,
     booking,
+    vibeTags,
+    allure,
+    coverImageUrl,
   };
 }
 
@@ -1878,9 +1955,14 @@ async function generatePlan(intent) {
       websiteUri: place.websiteUri || null,
       rating: place.rating,
       userRatingCount: place.userRatingCount,
+      priceLevel: place.priceLevel || null,
+      openNow: typeof place.openNow === "boolean" ? place.openNow : null,
       intro: place.intro || "",
       ticketing: place.ticketing || { required: false, confidence: "low" },
       booking: place.booking || null,
+      vibeTags: place.vibeTags || [],
+      allure: place.allure || null,
+      coverImageUrl: place.coverImageUrl || null,
     }));
     validated = {
       route: realtimeRoute,
@@ -1919,6 +2001,11 @@ async function generatePlan(intent) {
         booking: full.booking,
         googleMapsUri: full.googleMapsUri || null,
         websiteUri: full.websiteUri || null,
+        priceLevel: full.priceLevel || null,
+        openNow: typeof full.openNow === "boolean" ? full.openNow : null,
+        vibeTags: full.vibeTags || [],
+        allure: full.allure || null,
+        coverImageUrl: full.coverImageUrl || null,
       });
     }
     validated.route = enrichedFallbackRoute;
@@ -2069,9 +2156,14 @@ function toTravelStopFromPlace(place, idx, date) {
     websiteUri: place.websiteUri || null,
     rating: place.rating || null,
     userRatingCount: place.userRatingCount || null,
+    priceLevel: place.priceLevel || null,
+    openNow: typeof place.openNow === "boolean" ? place.openNow : null,
     intro: place.intro || "",
     ticketing: place.ticketing || { required: false, confidence: "low" },
     booking: place.booking || null,
+    vibeTags: place.vibeTags || [],
+    allure: place.allure || null,
+    coverImageUrl: place.coverImageUrl || null,
   };
 }
 
@@ -2256,7 +2348,11 @@ async function discoverRealtimeLocalPlaces({ q, city, country, category, limit =
     enriched.push(full);
   }
 
-  if (enriched.length >= 3) return enriched;
+  if (enriched.length >= 3) {
+    return enriched
+      .sort((a, b) => Number(b.allure?.score || 0) - Number(a.allure?.score || 0))
+      .slice(0, target);
+  }
 
   const guide = pickMookGuideForDestination(country, city);
   if (!guide) return enriched;
@@ -2282,7 +2378,9 @@ async function discoverRealtimeLocalPlaces({ q, city, country, category, limit =
     if (enriched.length >= target) break;
   }
 
-  return enriched.slice(0, target);
+  return enriched
+    .sort((a, b) => Number(b.allure?.score || 0) - Number(a.allure?.score || 0))
+    .slice(0, target);
 }
 
 function createActivity(plan) {

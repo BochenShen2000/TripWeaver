@@ -2,6 +2,7 @@ const form = document.getElementById("intent-form");
 const planSection = document.getElementById("plan-section");
 const planOutput = document.getElementById("plan-output");
 const createActivityBtn = document.getElementById("create-activity");
+const tonightGroupBtn = document.getElementById("tonight-group-btn");
 const activitySection = document.getElementById("activity-section");
 const activityOutput = document.getElementById("activity-output");
 const shareBtn = document.getElementById("share-btn");
@@ -564,6 +565,65 @@ function renderItemMore(summary, bodyHtml) {
   `;
 }
 
+function formatRatingText(rating, userRatingCount) {
+  const value = Number(rating);
+  const count = Number(userRatingCount);
+  if (!Number.isFinite(value)) return "暂无评分";
+  const safeCount = Number.isFinite(count) ? count : 0;
+  return `${value.toFixed(1)} (${safeCount.toLocaleString()})`;
+}
+
+function formatPriceLevel(priceLevel) {
+  const key = String(priceLevel || "").toUpperCase();
+  if (key.includes("FREE")) return "免费";
+  if (key.includes("INEXPENSIVE")) return "价格友好";
+  if (key.includes("MODERATE")) return "中等消费";
+  if (key.includes("EXPENSIVE")) return "偏高消费";
+  if (key.includes("VERY_EXPENSIVE")) return "高端消费";
+  return "价格未知";
+}
+
+function renderTagChips(tags = []) {
+  const clean = Array.isArray(tags)
+    ? tags
+        .map((tag) => String(tag || "").trim())
+        .filter(Boolean)
+        .slice(0, 4)
+    : [];
+  if (!clean.length) return "";
+  return `<div class="travel-tags">${clean.map((tag) => `<span class="travel-tag">${escapeHtml(tag)}</span>`).join("")}</div>`;
+}
+
+function renderPlaceHero(place, fallbackLabel = "推荐地点") {
+  const imageUrl = String(place?.coverImageUrl || place?.photoUrl || "").trim();
+  const allureLevel = String(place?.allure?.level || "").trim();
+  const allureScore = Number(place?.allure?.score);
+  const badges = [];
+  if (allureLevel) {
+    badges.push(
+      `<span class="place-hero-badge primary">${escapeHtml(allureLevel)}${Number.isFinite(allureScore) ? ` ${allureScore}` : ""}</span>`,
+    );
+  }
+  const sourceLabel = String(place?.source || "").trim();
+  if (sourceLabel) {
+    badges.push(`<span class="place-hero-badge">${escapeHtml(sourceLabel)}</span>`);
+  }
+  if (!imageUrl) {
+    return `
+      <div class="place-hero place-hero-fallback">
+        <div class="place-hero-overlay">${badges.join("")}</div>
+        <strong>${escapeHtml(fallbackLabel)}</strong>
+      </div>
+    `;
+  }
+  return `
+    <div class="place-hero">
+      <img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(fallbackLabel)}" loading="lazy" />
+      <div class="place-hero-overlay">${badges.join("")}</div>
+    </div>
+  `;
+}
+
 if (appToast) {
   window.alert = (message) => {
     showToast(message);
@@ -850,6 +910,97 @@ async function startBuddyDiscussion(prefillText = "") {
     markFlowStep("match", prefillText || "已进入路线讨论");
   } catch (err) {
     alert(`打开聊天失败: ${err.message}`);
+  }
+}
+
+function getTonightDateTimeLabel() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = `${now.getMonth() + 1}`.padStart(2, "0");
+  const d = `${now.getDate()}`.padStart(2, "0");
+  return `${y}-${m}-${d} 19:30`;
+}
+
+function buildTonightLaunchMessage(plan, activity, scene = "") {
+  const routePreview = Array.isArray(plan?.route)
+    ? plan.route
+        .slice(0, 4)
+        .map((step, idx) => `${idx + 1}. ${formatStopDateTime(step)} ${step.point}`)
+        .join("\n")
+    : "";
+  const sceneLine = scene ? `主题：${scene}\n` : "";
+  return [
+    "【今晚就去｜一键成团】",
+    `活动：${plan?.title || "今晚路线"}`,
+    sceneLine.trim(),
+    `集合时间：${getTonightDateTimeLabel()}`,
+    `预算：${plan?.budgetEstimate || "待定"}`,
+    "路线预览：",
+    routePreview || "请先补充路线",
+    `报名链接：${activity?.link || ""}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function buildTonightDiscussionTemplate(plan) {
+  const firstStop = Array.isArray(plan?.route) && plan.route.length ? plan.route[0].point : "待定";
+  return `【今晚就去讨论模板】
+我是否参加：可参加 / 待定
+我预计到达时间：
+我可接受预算：
+我希望追加地点：
+集合点建议：${firstStop}
+交通建议：`;
+}
+
+async function createAndRenderActivityFromPlan(plan, focusPlanScreen = true) {
+  currentActivity = await createActivity(plan);
+  currentActivity.link = `${location.origin}${location.pathname}?join=${currentActivity.joinToken}`;
+  renderActivity(currentActivity);
+  activitySection.classList.remove("hidden");
+  if (focusPlanScreen) {
+    navigateToScreen("plan", "activity-section");
+  }
+  await refreshEvents();
+  return currentActivity;
+}
+
+async function launchTonightGroup(options = {}) {
+  const { seed = null, scene = "" } = options;
+  if (!currentUser) {
+    navigateToScreen("social", "auth-section");
+    alert("请先登录后发起今晚成团。");
+    return;
+  }
+  try {
+    let plan = currentPlan;
+    if (seed) {
+      const intent = buildIntentFromSeed(seed);
+      applyIntentToForm(intent);
+      plan = await api.generatePlan(intent);
+      await applyGeneratedPlan(plan, `今晚就去 · ${scene || seed.title || "快速成团"}`);
+    } else if (!plan) {
+      const intent = Object.fromEntries(new FormData(form).entries());
+      plan = await api.generatePlan(intent);
+      await applyGeneratedPlan(plan, "今晚就去 · 快速成团");
+    }
+    const activity = await createAndRenderActivityFromPlan(plan, false);
+
+    await openChatTarget({ type: "global", id: "global", name: "Global 群聊" });
+    await sendContentToSelectedChat(buildTonightLaunchMessage(plan, activity, scene));
+    await sendContentToSelectedChat(buildTonightDiscussionTemplate(plan));
+
+    markFlowStep("join", "今晚成团消息已发群");
+    navigateToScreen("social", "social-section");
+    await api.logEvent("tonight_group_launch", {
+      scene: scene || "",
+      activityCode: activity.code,
+      routeCount: Array.isArray(plan.route) ? plan.route.length : 0,
+    });
+    alert("已自动发起活动并推送到 Global 群聊。");
+  } catch (err) {
+    alert(`今晚成团失败: ${err.message}`);
   }
 }
 
@@ -1498,10 +1649,17 @@ function renderDiscoverPlaces(places) {
   discoverList.innerHTML = places
     .map((p) => {
       const mapsUrl = p.googleMapsUri || createGoogleMapsSearchUrl(p.matchedName || p.point);
-      const rating = p.rating ? `${p.rating} (${p.userRatingCount || 0})` : "暂无评分";
+      const rating = formatRatingText(p.rating, p.userRatingCount);
       const ticket = p.ticketing?.required ? "可能需门票" : "通常无需门票";
+      const openState = p.openNow === true ? "营业中" : p.openNow === false ? "当前休息" : "营业信息未知";
+      const price = formatPriceLevel(p.priceLevel);
+      const title = p.point || p.matchedName || "推荐地点";
+      const summary = String(p.intro || "").trim() || "交通便利，适合加入本次路线。";
+      const tags = Array.isArray(p.vibeTags) && p.vibeTags.length ? p.vibeTags : [ticket, openState, price];
+      const heroHtml = renderPlaceHero(p, title);
       const moreBody = `
-        <p class="chat-content">${escapeHtml(p.intro || "")}</p>
+        <p class="chat-content">${escapeHtml(summary)}</p>
+        <div class="travel-meta">地址：${escapeHtml(p.matchedName || "未返回详细地址")}</div>
         <div class="actions">
           ${p.booking?.official ? `<a href="${p.booking.official}" target="_blank" rel="noreferrer">官网</a>` : ""}
           ${p.ticketing?.required && p.booking?.klook ? `<a href="${p.booking.klook}" target="_blank" rel="noreferrer">Klook</a>` : ""}
@@ -1510,12 +1668,14 @@ function renderDiscoverPlaces(places) {
         </div>
       `;
       return `
-      <article class="travel-item compact">
-        <div class="travel-head"><strong>${escapeHtml(p.point)}</strong><span>${escapeHtml(p.source || "")}</span></div>
-        <div class="travel-meta">${escapeHtml(p.matchedName || "")}</div>
-        <div class="travel-meta">评分：${rating} | ${ticket}</div>
+      <article class="travel-item compact place-card">
+        ${heroHtml}
+        <div class="travel-head"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(price)}</span></div>
+        <div class="travel-meta">${escapeHtml(summary)}</div>
+        <div class="travel-meta">评分：${rating} | ${escapeHtml(openState)}</div>
+        ${renderTagChips(tags)}
         <div class="actions compact-primary-actions">
-          <a href="${mapsUrl}" target="_blank" rel="noreferrer">Google 地图</a>
+          <a href="${mapsUrl}" target="_blank" rel="noreferrer">查看地图与导航</a>
           <button
             class="btn-secondary discover-plan-btn"
             type="button"
@@ -1523,7 +1683,16 @@ function renderDiscoverPlaces(places) {
             data-place-city="${escapeHtml(p.city || "")}"
             data-place-country="${escapeHtml(p.country || "")}"
             data-place-intro="${escapeHtml(p.intro || "")}"
-          >按地点生成路线</button>
+          >加入并生成路线</button>
+          <button
+            class="btn-primary discover-tonight-btn"
+            type="button"
+            data-place-name="${escapeHtml(p.point || "")}"
+            data-place-city="${escapeHtml(p.city || "")}"
+            data-place-country="${escapeHtml(p.country || "")}"
+            data-place-category="${escapeHtml(lastDiscoverContext.category || "")}"
+            data-place-intro="${escapeHtml(p.intro || "")}"
+          >今晚就去</button>
         </div>
         ${renderItemMore("地点详情与更多操作", moreBody)}
       </article>
@@ -1637,6 +1806,10 @@ function renderPlan(plan) {
       const mapsUrl = createGoogleMapsSearchUrl(step.matchedName || step.point);
       const status = step.verified ? "真实地点" : "待确认";
       const stopDateTime = formatStopDateTime(step);
+      const rating = formatRatingText(step.rating, step.userRatingCount);
+      const openState = step.openNow === true ? "营业中" : step.openNow === false ? "当前休息" : "营业信息未知";
+      const price = formatPriceLevel(step.priceLevel);
+      const tags = Array.isArray(step.vibeTags) && step.vibeTags.length ? step.vibeTags : [status, price];
       const bookingLinks = [];
       if (step.ticketing?.required && step.booking?.klook) {
         bookingLinks.push(`<a href="${step.booking.klook}" target="_blank" rel="noreferrer">Klook 买票</a>`);
@@ -1653,9 +1826,11 @@ function renderPlan(plan) {
       const primaryLinks = [mapLink];
       if (bookingLinks.length) primaryLinks.push(bookingLinks[0]);
       const moreLinks = bookingLinks.slice(1);
+      const heroHtml = renderPlaceHero(step, step.point || "路线站点");
       const moreBody = `
         ${step.intro ? `<p class="chat-content">${escapeHtml(step.intro)}</p>` : ""}
         <div class="travel-meta">${step.ticketing?.required ? "门票：可能需要提前购票" : "门票：通常无需单独门票"}</div>
+        <div class="travel-meta">评分：${rating} | ${escapeHtml(openState)} | ${escapeHtml(price)}</div>
         ${
           moreLinks.length
             ? `<div class="actions">${moreLinks.join("")}</div>`
@@ -1663,8 +1838,11 @@ function renderPlan(plan) {
         }
       `;
       return `
-        <article class="travel-item compact">
+        <article class="travel-item compact plan-stop-card">
+          ${heroHtml}
           <div class="travel-head"><strong>${escapeHtml(stopDateTime)} · ${escapeHtml(step.point)}</strong><span>${status}</span></div>
+          <div class="travel-meta">评分：${rating} | ${escapeHtml(openState)}</div>
+          ${renderTagChips(tags)}
           <div class="actions compact-primary-actions">${primaryLinks.join("")}</div>
           ${renderItemMore("站点介绍与购票入口", moreBody)}
         </article>
@@ -2729,7 +2907,8 @@ discoverForm.addEventListener("submit", async (e) => {
 discoverList.addEventListener("click", async (e) => {
   const planBtn = e.target.closest(".discover-plan-btn");
   const buddyBtn = e.target.closest(".discover-buddy-btn");
-  if (!planBtn && !buddyBtn) return;
+  const tonightBtn = e.target.closest(".discover-tonight-btn");
+  if (!planBtn && !buddyBtn && !tonightBtn) return;
 
   if (planBtn) {
     const seed = {
@@ -2755,6 +2934,19 @@ discoverList.addEventListener("click", async (e) => {
     const placeName = buddyBtn.getAttribute("data-place-name") || "附近地点";
     markFlowStep("discover", placeName);
     await startBuddyDiscussion(`想去 ${placeName}，找搭子一起。`);
+    return;
+  }
+
+  if (tonightBtn) {
+    const seed = {
+      title: tonightBtn.getAttribute("data-place-name") || "",
+      city: tonightBtn.getAttribute("data-place-city") || lastDiscoverContext.city,
+      country: tonightBtn.getAttribute("data-place-country") || lastDiscoverContext.country,
+      category: tonightBtn.getAttribute("data-place-category") || lastDiscoverContext.category,
+      description: tonightBtn.getAttribute("data-place-intro") || "",
+    };
+    const scene = `${seed.city || "附近"} · ${seed.title || "今晚路线"}`;
+    await launchTonightGroup({ seed, scene });
   }
 });
 
@@ -3007,16 +3199,17 @@ form.addEventListener("submit", async (e) => {
 createActivityBtn.addEventListener("click", async () => {
   if (!currentPlan) return;
   try {
-    currentActivity = await createActivity(currentPlan);
-    currentActivity.link = `${location.origin}${location.pathname}?join=${currentActivity.joinToken}`;
-    renderActivity(currentActivity);
-    activitySection.classList.remove("hidden");
-    navigateToScreen("plan", "activity-section");
-    await refreshEvents();
+    await createAndRenderActivityFromPlan(currentPlan, true);
   } catch (err) {
     alert(`发起失败: ${err.message}`);
   }
 });
+
+if (tonightGroupBtn) {
+  tonightGroupBtn.addEventListener("click", async () => {
+    await launchTonightGroup({ scene: currentPlan?.title || "今晚路线" });
+  });
+}
 
 shareBtn.addEventListener("click", async () => {
   if (!currentActivity) return;
