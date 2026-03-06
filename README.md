@@ -8,12 +8,15 @@
 - 一键发起活动并生成分享链接
 - 记录事件埋点（输入、生成、发起、分享）
 - 交互地图显示编号标注与路线连线（每站可跳转 Google Maps）
+- 注册/登录系统（JWT）
+- IM 实时聊天（Socket.IO）
 
 ## 本地运行
 
 ```bash
 npm install
 export GOOGLE_MAPS_API_KEY="your_google_maps_api_key"
+export JWT_SECRET="change_this_to_a_long_random_string"
 npm run start
 ```
 
@@ -23,6 +26,11 @@ npm run start
 
 - `GET /api/health`
 - `GET /api/maps-config`
+- `POST /api/auth/register`
+- `POST /api/auth/login`
+- `GET /api/auth/me`
+- `GET /api/im/messages`
+- `POST /api/im/messages`
 - `GET /api/events`
 - `POST /api/events`
 - `POST /api/generate-plan`
@@ -36,6 +44,8 @@ npm run start
 - Storage: 本地 JSON 文件（运行时在 `data/` 下自动创建）
 - Map Rendering: Google Maps JavaScript API
 - Place Validation: OpenStreetMap Nominatim
+- Auth: JWT + bcryptjs
+- IM: Socket.IO
 
 ## Google Maps 说明
 

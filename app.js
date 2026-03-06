@@ -7,10 +7,21 @@ const activityOutput = document.getElementById("activity-output");
 const shareBtn = document.getElementById("share-btn");
 const copyBtn = document.getElementById("copy-btn");
 const eventsLog = document.getElementById("events-log");
+
 const mapSection = document.getElementById("map-section");
 const mapLinks = document.getElementById("map-links");
 const mapContainer = document.getElementById("route-map");
 const mapStatus = document.getElementById("map-status");
+
+const authStatus = document.getElementById("auth-status");
+const registerForm = document.getElementById("register-form");
+const loginForm = document.getElementById("login-form");
+const logoutBtn = document.getElementById("logout-btn");
+
+const imSection = document.getElementById("im-section");
+const chatMessages = document.getElementById("chat-messages");
+const chatForm = document.getElementById("chat-form");
+const chatInput = document.getElementById("chat-input");
 
 let currentPlan = null;
 let currentActivity = null;
@@ -21,12 +32,26 @@ let googleMarkers = [];
 let googlePath = null;
 let infoWindow = null;
 let googleAuthFailed = false;
+
+let authToken = localStorage.getItem("auth_token") || "";
+let currentUser = null;
+let chatSocket = null;
+
 const api = {
   async request(path, options = {}) {
+    const headers = {
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    };
+    if (authToken) {
+      headers.Authorization = `Bearer ${authToken}`;
+    }
+
     const response = await fetch(path, {
-      headers: { "Content-Type": "application/json" },
       ...options,
+      headers,
     });
+
     if (!response.ok) {
       const detail = await response.json().catch(() => ({}));
       throw new Error(detail.error || "Request failed");
@@ -57,7 +82,111 @@ const api = {
   getMapsConfig() {
     return this.request("/api/maps-config");
   },
+  register(payload) {
+    return this.request("/api/auth/register", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  login(payload) {
+    return this.request("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  me() {
+    return this.request("/api/auth/me");
+  },
+  getMessages(limit = 100) {
+    return this.request(`/api/im/messages?limit=${limit}`);
+  },
+  sendMessage(content) {
+    return this.request("/api/im/messages", {
+      method: "POST",
+      body: JSON.stringify({ content }),
+    });
+  },
 };
+
+function setAuth(token, user) {
+  authToken = token || "";
+  currentUser = user || null;
+
+  if (authToken) {
+    localStorage.setItem("auth_token", authToken);
+  } else {
+    localStorage.removeItem("auth_token");
+  }
+
+  renderAuthState();
+}
+
+function renderAuthState() {
+  if (currentUser) {
+    authStatus.textContent = `已登录：${currentUser.displayName} (@${currentUser.username})`;
+    imSection.classList.remove("hidden");
+    logoutBtn.classList.remove("hidden");
+  } else {
+    authStatus.textContent = "未登录";
+    imSection.classList.add("hidden");
+    logoutBtn.classList.add("hidden");
+    chatMessages.innerHTML = "";
+  }
+}
+
+function escapeHtml(str) {
+  return String(str)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function appendMessage(message) {
+  const wrapper = document.createElement("article");
+  wrapper.className = "chat-item";
+
+  const meta = document.createElement("div");
+  meta.className = "chat-meta";
+  const time = new Date(message.createdAt).toLocaleString();
+  meta.textContent = `${message.user.displayName} (@${message.user.username}) · ${time}`;
+
+  const content = document.createElement("p");
+  content.className = "chat-content";
+  content.innerHTML = escapeHtml(message.content);
+
+  wrapper.appendChild(meta);
+  wrapper.appendChild(content);
+  chatMessages.appendChild(wrapper);
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+function renderMessages(messages) {
+  chatMessages.innerHTML = "";
+  messages.forEach(appendMessage);
+}
+
+function connectChatSocket() {
+  if (!currentUser || !authToken || typeof io !== "function") return;
+  if (chatSocket) {
+    chatSocket.disconnect();
+  }
+
+  chatSocket = io({
+    auth: { token: authToken },
+  });
+
+  chatSocket.on("im:new_message", (message) => {
+    appendMessage(message);
+  });
+}
+
+async function loadMessages() {
+  if (!currentUser) return;
+  const messages = await api.getMessages(100);
+  renderMessages(messages);
+}
 
 function renderPlan(plan) {
   const validation = plan.validationSummary
@@ -261,6 +390,60 @@ function renderActivity(activity) {
   `;
 }
 
+registerForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const data = Object.fromEntries(new FormData(registerForm).entries());
+  try {
+    const result = await api.register(data);
+    setAuth(result.token, result.user);
+    registerForm.reset();
+    await loadMessages();
+    connectChatSocket();
+    alert("注册成功，已自动登录。");
+  } catch (err) {
+    alert(`注册失败: ${err.message}`);
+  }
+});
+
+loginForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const data = Object.fromEntries(new FormData(loginForm).entries());
+  try {
+    const result = await api.login(data);
+    setAuth(result.token, result.user);
+    loginForm.reset();
+    await loadMessages();
+    connectChatSocket();
+    alert("登录成功。");
+  } catch (err) {
+    alert(`登录失败: ${err.message}`);
+  }
+});
+
+logoutBtn.addEventListener("click", () => {
+  if (chatSocket) {
+    chatSocket.disconnect();
+    chatSocket = null;
+  }
+  setAuth("", null);
+});
+
+chatForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!currentUser) {
+    alert("请先登录。");
+    return;
+  }
+  const content = chatInput.value.trim();
+  if (!content) return;
+  try {
+    await api.sendMessage(content);
+    chatInput.value = "";
+  } catch (err) {
+    alert(`发送失败: ${err.message}`);
+  }
+});
+
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
   const data = new FormData(form);
@@ -330,12 +513,29 @@ async function refreshEvents() {
   }
 }
 
+async function restoreSession() {
+  if (!authToken) {
+    renderAuthState();
+    return;
+  }
+  try {
+    const result = await api.me();
+    currentUser = result.user;
+    renderAuthState();
+    await loadMessages();
+    connectChatSocket();
+  } catch (_err) {
+    setAuth("", null);
+  }
+}
+
 async function boot() {
   try {
     mapConfig = await api.getMapsConfig();
   } catch (_err) {
     mapConfig = { enabled: false, apiKey: "" };
   }
+  await restoreSession();
   await refreshEvents();
 }
 

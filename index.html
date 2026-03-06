@@ -86,6 +86,38 @@
         </form>
       </section>
 
+      <section class="card" id="auth-section">
+        <h2>账号系统</h2>
+        <p id="auth-status" class="meta">未登录</p>
+        <div class="auth-grid">
+          <form id="register-form" class="auth-form">
+            <h3>注册</h3>
+            <input name="displayName" placeholder="昵称" required />
+            <input name="username" placeholder="用户名（唯一）" required />
+            <input name="password" type="password" placeholder="密码（至少6位）" required />
+            <button type="submit" class="btn-primary">注册</button>
+          </form>
+          <form id="login-form" class="auth-form">
+            <h3>登录</h3>
+            <input name="username" placeholder="用户名" required />
+            <input name="password" type="password" placeholder="密码" required />
+            <button type="submit" class="btn-primary">登录</button>
+          </form>
+        </div>
+        <div class="actions">
+          <button id="logout-btn" class="btn-secondary hidden" type="button">退出登录</button>
+        </div>
+      </section>
+
+      <section class="card hidden" id="im-section">
+        <h2>IM 聊天（Global Room）</h2>
+        <div id="chat-messages" class="chat-messages"></div>
+        <form id="chat-form" class="chat-form">
+          <input id="chat-input" name="content" placeholder="输入消息..." required />
+          <button type="submit" class="btn-primary">发送</button>
+        </form>
+      </section>
+
       <div class="split-layout">
         <section id="plan-section" class="card hidden">
           <h2>2) 结构化活动方案</h2>
@@ -118,6 +150,7 @@
       </section>
     </main>
 
+    <script src="/socket.io/socket.io.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>

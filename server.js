@@ -1,15 +1,28 @@
 const fs = require("fs");
 const path = require("path");
 require("dotenv").config();
+const http = require("http");
 const express = require("express");
 const cors = require("cors");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const { Server } = require("socket.io");
 
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+  },
+});
 const PORT = process.env.PORT || 3000;
 const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || "";
+const JWT_SECRET = process.env.JWT_SECRET || "dev_change_me_secret";
 const DATA_DIR = path.join(__dirname, "data");
 const ACTIVITIES_FILE = path.join(DATA_DIR, "activities.json");
 const EVENTS_FILE = path.join(DATA_DIR, "events.json");
+const USERS_FILE = path.join(DATA_DIR, "users.json");
+const MESSAGES_FILE = path.join(DATA_DIR, "messages.json");
 
 const templates = [
   { interest: "city walk", area: "新加坡市中心", points: ["Bugis 街区散步", "Haji Lane 打卡", "Marina Bay 夜景"] },
@@ -51,6 +64,8 @@ function ensureDataStore() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
   if (!fs.existsSync(ACTIVITIES_FILE)) fs.writeFileSync(ACTIVITIES_FILE, "[]\n", "utf8");
   if (!fs.existsSync(EVENTS_FILE)) fs.writeFileSync(EVENTS_FILE, "[]\n", "utf8");
+  if (!fs.existsSync(USERS_FILE)) fs.writeFileSync(USERS_FILE, "[]\n", "utf8");
+  if (!fs.existsSync(MESSAGES_FILE)) fs.writeFileSync(MESSAGES_FILE, "[]\n", "utf8");
 }
 
 function readJson(filePath) {
@@ -65,6 +80,52 @@ function appendJson(filePath, item) {
   const list = readJson(filePath);
   list.push(item);
   writeJson(filePath, list);
+}
+
+function toPublicUser(user) {
+  return {
+    id: user.id,
+    username: user.username,
+    displayName: user.displayName,
+    createdAt: user.createdAt,
+  };
+}
+
+function createToken(user) {
+  return jwt.sign(
+    {
+      sub: user.id,
+      username: user.username,
+      displayName: user.displayName,
+    },
+    JWT_SECRET,
+    { expiresIn: "7d" },
+  );
+}
+
+function verifyToken(token) {
+  return jwt.verify(token, JWT_SECRET);
+}
+
+function getBearerToken(req) {
+  const authHeader = req.headers.authorization || "";
+  if (!authHeader.startsWith("Bearer ")) return null;
+  return authHeader.slice(7).trim();
+}
+
+function authMiddleware(req, res, next) {
+  const token = getBearerToken(req);
+  if (!token) return res.status(401).json({ error: "Unauthorized." });
+  try {
+    const claims = verifyToken(token);
+    const users = readJson(USERS_FILE);
+    const user = users.find((item) => item.id === claims.sub);
+    if (!user) return res.status(401).json({ error: "Invalid token user." });
+    req.user = user;
+    return next();
+  } catch (_err) {
+    return res.status(401).json({ error: "Invalid or expired token." });
+  }
 }
 
 function isValidIntent(intent) {
@@ -221,9 +282,77 @@ app.get("/api/maps-config", (_req, res) => {
   });
 });
 
+app.post("/api/auth/register", async (req, res) => {
+  const { username, password, displayName } = req.body || {};
+  if (!username || !password || !displayName) {
+    return res.status(400).json({ error: "username, password, displayName are required." });
+  }
+  if (String(password).length < 6) {
+    return res.status(400).json({ error: "Password must be at least 6 characters." });
+  }
+  const normalizedUsername = String(username).trim().toLowerCase();
+  const users = readJson(USERS_FILE);
+  if (users.some((user) => user.username === normalizedUsername)) {
+    return res.status(409).json({ error: "Username already exists." });
+  }
+  const passwordHash = await bcrypt.hash(String(password), 10);
+  const user = {
+    id: `USR-${Date.now()}-${Math.floor(Math.random() * 9999)}`,
+    username: normalizedUsername,
+    displayName: String(displayName).trim(),
+    passwordHash,
+    createdAt: new Date().toISOString(),
+  };
+  users.push(user);
+  writeJson(USERS_FILE, users);
+  const token = createToken(user);
+  return res.status(201).json({ token, user: toPublicUser(user) });
+});
+
+app.post("/api/auth/login", async (req, res) => {
+  const { username, password } = req.body || {};
+  if (!username || !password) {
+    return res.status(400).json({ error: "username and password are required." });
+  }
+  const normalizedUsername = String(username).trim().toLowerCase();
+  const users = readJson(USERS_FILE);
+  const user = users.find((item) => item.username === normalizedUsername);
+  if (!user) return res.status(401).json({ error: "Invalid username or password." });
+  const ok = await bcrypt.compare(String(password), user.passwordHash);
+  if (!ok) return res.status(401).json({ error: "Invalid username or password." });
+  const token = createToken(user);
+  return res.json({ token, user: toPublicUser(user) });
+});
+
+app.get("/api/auth/me", authMiddleware, (req, res) => {
+  return res.json({ user: toPublicUser(req.user) });
+});
+
 app.get("/api/events", (_req, res) => {
   const events = readJson(EVENTS_FILE);
   res.json(events.slice(-100));
+});
+
+app.get("/api/im/messages", authMiddleware, (req, res) => {
+  const limit = Math.min(Number(req.query.limit) || 100, 200);
+  const messages = readJson(MESSAGES_FILE);
+  return res.json(messages.slice(-limit));
+});
+
+app.post("/api/im/messages", authMiddleware, (req, res) => {
+  const { content } = req.body || {};
+  if (!content || !String(content).trim()) {
+    return res.status(400).json({ error: "Message content is required." });
+  }
+  const message = {
+    id: `MSG-${Date.now()}-${Math.floor(Math.random() * 9999)}`,
+    content: String(content).trim().slice(0, 2000),
+    user: toPublicUser(req.user),
+    createdAt: new Date().toISOString(),
+  };
+  appendJson(MESSAGES_FILE, message);
+  io.to("global").emit("im:new_message", message);
+  return res.status(201).json(message);
 });
 
 app.post("/api/events", (req, res) => {
@@ -276,6 +405,29 @@ app.get("/api/activities/:code", (req, res) => {
   return res.json(activity);
 });
 
-app.listen(PORT, () => {
+io.use((socket, next) => {
+  const token = socket.handshake.auth?.token;
+  if (!token) return next(new Error("Unauthorized"));
+  try {
+    const claims = verifyToken(token);
+    const users = readJson(USERS_FILE);
+    const user = users.find((item) => item.id === claims.sub);
+    if (!user) return next(new Error("Invalid user"));
+    socket.user = user;
+    return next();
+  } catch (_err) {
+    return next(new Error("Invalid token"));
+  }
+});
+
+io.on("connection", (socket) => {
+  socket.join("global");
+  socket.emit("im:welcome", {
+    user: toPublicUser(socket.user),
+    now: new Date().toISOString(),
+  });
+});
+
+server.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
 });

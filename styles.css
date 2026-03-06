@@ -189,6 +189,63 @@ li {
   margin: 8px 0 0;
 }
 
+.auth-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.auth-form {
+  background: #fffefc;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.auth-form h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.chat-messages {
+  background: #fffefc;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  min-height: 180px;
+  max-height: 320px;
+  overflow-y: auto;
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.chat-item {
+  border: 1px solid #e4dece;
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: #fff;
+}
+
+.chat-meta {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.chat-content {
+  margin: 0;
+  line-height: 1.4;
+}
+
+.chat-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
 .map-wrap {
   width: 100%;
   border-radius: 12px;
@@ -269,6 +326,10 @@ pre {
   }
 
   .split-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .auth-grid {
     grid-template-columns: 1fr;
   }
 
