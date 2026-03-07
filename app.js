@@ -9,7 +9,10 @@ const manualPlaceList = document.getElementById("manual-place-list");
 const manualPlaceSuggestions = document.getElementById("manual-place-suggestions");
 const planSection = document.getElementById("plan-section");
 const planOutput = document.getElementById("plan-output");
+const activityCreateSection = document.getElementById("activity-create-section");
 const createActivityBtn = document.getElementById("create-activity");
+const openActivityCreateBtn = document.getElementById("open-activity-create-btn");
+const backPlanBtn = document.getElementById("back-plan-btn");
 const tonightGroupBtn = document.getElementById("tonight-group-btn");
 const activityLaunchForm = document.getElementById("activity-launch-form");
 const activityCoverInput = document.getElementById("activity-cover-input");
@@ -1157,7 +1160,7 @@ function jumpToFlowStep(step) {
   } else if (step === "plan") {
     navigateToScreen("plan", currentPlan ? "plan-section" : "intent-section");
   } else if (step === "launch") {
-    navigateToScreen("plan", currentPlan ? "plan-section" : "intent-section");
+    navigateToScreen("plan", currentPlan ? "activity-create-section" : "intent-section");
   } else if (step === "join") {
     setExplorePanel("events");
     navigateToScreen("explore", "events-section");
@@ -4396,6 +4399,22 @@ form.addEventListener("submit", async (e) => {
     alert(`生成失败: ${err.message}`);
   }
 });
+
+if (openActivityCreateBtn) {
+  openActivityCreateBtn.addEventListener("click", () => {
+    if (!currentPlan) {
+      navigateToScreen("plan", "intent-section");
+      return;
+    }
+    navigateToScreen("plan", "activity-create-section");
+  });
+}
+
+if (backPlanBtn) {
+  backPlanBtn.addEventListener("click", () => {
+    navigateToScreen("plan", "plan-section");
+  });
+}
 
 if (activityLaunchForm) {
   activityLaunchForm.addEventListener("submit", async (e) => {

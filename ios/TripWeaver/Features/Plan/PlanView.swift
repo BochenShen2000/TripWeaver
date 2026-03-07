@@ -421,62 +421,10 @@ struct PlanView: View {
         let renderedPlan = mergedPlan(plan, with: editableStops)
         TWCard {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Text(renderedPlan.title)
-                        .font(.title3.bold())
-                    Spacer()
-                    if editingRoute {
-                        Button("取消") {
-                            cancelRouteEditing()
-                        }
-                        .font(.caption.weight(.semibold))
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-
-                        Button("保存修改") {
-                            saveRouteEditing(basePlan: plan)
-                        }
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(AppTheme.brand.opacity(0.14), in: Capsule())
-                        .buttonStyle(.plain)
-                    } else {
-                        Button("编辑路线") {
-                            startRouteEditing(basePlan: plan)
-                        }
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(AppTheme.brand.opacity(0.14), in: Capsule())
-                        .buttonStyle(.plain)
-                    }
-                }
+                planHeaderSection(title: renderedPlan.title, basePlan: plan)
 
                 if let narrative = renderedPlan.narrative {
-                    VStack(alignment: .leading, spacing: 5) {
-                        if let hook = narrative.hook, !hook.isEmpty {
-                            Text(hook)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(AppTheme.brandDeep)
-                        }
-                        if let vibe = narrative.vibe, !vibe.isEmpty {
-                            Text(vibe)
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
-                        if let insights = narrative.searchInsights, !insights.isEmpty {
-                            ForEach(Array(insights.prefix(3).enumerated()), id: \.offset) { _, item in
-                                Text("• \(item)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 9)
-                    .background(Color.white.opacity(0.76), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                    planNarrativeSection(narrative)
                 }
 
                 if let budget = renderedPlan.budgetEstimate {
@@ -486,105 +434,16 @@ struct PlanView: View {
                 }
 
                 if let summary = renderedPlan.routeSummary {
-                    Text("总路径：约 \(summary.distanceKm ?? 0, specifier: "%.1f") km / \(summary.durationMin ?? 0) 分钟")
+                    let distance = summary.distanceKm ?? 0.0
+                    let duration = summary.durationMin ?? 0
+                    Text("总路径：约 \(distance, specifier: "%.1f") km / \(duration) 分钟")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
 
                 PlaceMapView(route: renderedPlan.route)
 
-                VStack(spacing: 8) {
-                    if editingRoute {
-                        ForEach($editableStops) { $stop in
-                            let stopId = stop.wrappedValue.id
-                            let idx = editableStops.firstIndex(where: { $0.id == stopId }) ?? 0
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack {
-                                    Text("第 \(idx + 1) 站")
-                                        .font(.subheadline.weight(.semibold))
-                                    Spacer()
-                                    Text(editableCoordinateText(stop.wrappedValue))
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                }
-                                TextField("地点名称", text: $stop.point)
-                                    .textInputAutocapitalization(.words)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 8)
-                                    .background(Color.white.opacity(0.9), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                DatePicker(
-                                    "到达时间",
-                                    selection: $stop.dateTime,
-                                    displayedComponents: [.date, .hourAndMinute]
-                                )
-                                .datePickerStyle(.compact)
-                                .tint(AppTheme.brand)
-                                TextField("地点介绍", text: $stop.intro, axis: .vertical)
-                                    .lineLimit(2...4)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 8)
-                                    .background(Color.white.opacity(0.9), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                TextField("推荐理由", text: $stop.recommendReason, axis: .vertical)
-                                    .lineLimit(2...4)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 8)
-                                    .background(Color.white.opacity(0.9), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                HStack(spacing: 8) {
-                                    Button("上移") {
-                                        moveEditableStop(stopId, offset: -1)
-                                    }
-                                    .buttonStyle(TWSecondaryButtonStyle())
-                                    .disabled(idx == 0)
-
-                                    Button("下移") {
-                                        moveEditableStop(stopId, offset: 1)
-                                    }
-                                    .buttonStyle(TWSecondaryButtonStyle())
-                                    .disabled(idx >= editableStops.count - 1)
-
-                                    Button("删除") {
-                                        removeEditableStop(stopId)
-                                    }
-                                    .buttonStyle(TWSecondaryButtonStyle())
-                                    .disabled(editableStops.count <= 1)
-                                }
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 9)
-                            .background(Color.white.opacity(0.78), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-                        }
-
-                        Button {
-                            addEditableStop()
-                        } label: {
-                            Label("新增一站", systemImage: "plus.circle.fill")
-                        }
-                        .buttonStyle(TWSecondaryButtonStyle())
-                    } else {
-                        ForEach(Array(renderedPlan.route.enumerated()), id: \.offset) { idx, stop in
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("\(idx + 1). \((stop.date ?? "")) \((stop.time ?? "")) \(stop.point)")
-                                    .font(.subheadline.weight(.semibold))
-                                if let intro = stop.intro {
-                                    Text(intro)
-                                        .font(.footnote)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(3)
-                                }
-                                if let reason = stop.recommendReason, !reason.isEmpty {
-                                    Text(reason)
-                                        .font(.caption)
-                                        .foregroundStyle(AppTheme.brandDeep)
-                                }
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 9)
-                            .background(Color.white.opacity(0.78), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-                        }
-                    }
-                }
+                routeStopsSection(renderedPlan: renderedPlan)
 
                 if editingRoute {
                     Text("编辑中：调整站点顺序、时间、文案后点“保存修改”。地图会按当前编辑结果实时刷新。")
@@ -608,6 +467,174 @@ struct PlanView: View {
                 .buttonStyle(TWSecondaryButtonStyle())
                 .disabled(editingRoute || renderedPlan.route.isEmpty)
             }
+        }
+    }
+
+    @ViewBuilder
+    private func planHeaderSection(title: String, basePlan: Plan) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(title)
+                .font(.title3.bold())
+            Spacer()
+            if editingRoute {
+                Button("取消") {
+                    cancelRouteEditing()
+                }
+                .font(.caption.weight(.semibold))
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+
+                Button("保存修改") {
+                    saveRouteEditing(basePlan: basePlan)
+                }
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(AppTheme.brand.opacity(0.14), in: Capsule())
+                .buttonStyle(.plain)
+            } else {
+                Button("编辑路线") {
+                    startRouteEditing(basePlan: basePlan)
+                }
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(AppTheme.brand.opacity(0.14), in: Capsule())
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func planNarrativeSection(_ narrative: PlanNarrative) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            if let hook = narrative.hook, !hook.isEmpty {
+                Text(hook)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppTheme.brandDeep)
+            }
+            if let vibe = narrative.vibe, !vibe.isEmpty {
+                Text(vibe)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            if let insights = narrative.searchInsights, !insights.isEmpty {
+                ForEach(Array(insights.prefix(3).enumerated()), id: \.offset) { _, item in
+                    Text("• \(item)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .background(Color.white.opacity(0.76), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+    }
+
+    @ViewBuilder
+    private func routeStopsSection(renderedPlan: Plan) -> some View {
+        VStack(spacing: 8) {
+            if editingRoute {
+                editableRouteStopsSection()
+            } else {
+                readOnlyRouteStopsSection(renderedPlan.route)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func editableRouteStopsSection() -> some View {
+        ForEach($editableStops) { $stop in
+            let stopId = stop.id
+            let idx = editableStops.firstIndex(where: { $0.id == stopId }) ?? 0
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("第 \(idx + 1) 站")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Text(editableCoordinateText(stop))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                TextField("地点名称", text: $stop.point)
+                    .textInputAutocapitalization(.words)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(Color.white.opacity(0.9), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                DatePicker(
+                    "到达时间",
+                    selection: $stop.dateTime,
+                    displayedComponents: [.date, .hourAndMinute]
+                )
+                .datePickerStyle(.compact)
+                .tint(AppTheme.brand)
+                TextField("地点介绍", text: $stop.intro, axis: .vertical)
+                    .lineLimit(2...4)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(Color.white.opacity(0.9), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                TextField("推荐理由", text: $stop.recommendReason, axis: .vertical)
+                    .lineLimit(2...4)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(Color.white.opacity(0.9), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                HStack(spacing: 8) {
+                    Button("上移") {
+                        moveEditableStop(stopId, offset: -1)
+                    }
+                    .buttonStyle(TWSecondaryButtonStyle())
+                    .disabled(idx == 0)
+
+                    Button("下移") {
+                        moveEditableStop(stopId, offset: 1)
+                    }
+                    .buttonStyle(TWSecondaryButtonStyle())
+                    .disabled(idx >= editableStops.count - 1)
+
+                    Button("删除") {
+                        removeEditableStop(stopId)
+                    }
+                    .buttonStyle(TWSecondaryButtonStyle())
+                    .disabled(editableStops.count <= 1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 9)
+            .background(Color.white.opacity(0.78), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        }
+
+        Button {
+            addEditableStop()
+        } label: {
+            Label("新增一站", systemImage: "plus.circle.fill")
+        }
+        .buttonStyle(TWSecondaryButtonStyle())
+    }
+
+    @ViewBuilder
+    private func readOnlyRouteStopsSection(_ route: [RouteStop]) -> some View {
+        ForEach(Array(route.enumerated()), id: \.offset) { idx, stop in
+            VStack(alignment: .leading, spacing: 4) {
+                Text("\(idx + 1). \((stop.date ?? "")) \((stop.time ?? "")) \(stop.point)")
+                    .font(.subheadline.weight(.semibold))
+                if let intro = stop.intro {
+                    Text(intro)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                }
+                if let reason = stop.recommendReason, !reason.isEmpty {
+                    Text(reason)
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.brandDeep)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 9)
+            .background(Color.white.opacity(0.78), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
         }
     }
 
@@ -638,7 +665,7 @@ struct PlanView: View {
 
     private func editableCoordinateText(_ stop: EditableRouteStop) -> String {
         guard let lat = stop.lat, let lng = stop.lng else { return "坐标待补充" }
-        return "\(lat, specifier: "%.4f"), \(lng, specifier: "%.4f")"
+        return String(format: "%.4f, %.4f", lat, lng)
     }
 
     private func startRouteEditing(basePlan: Plan) {
