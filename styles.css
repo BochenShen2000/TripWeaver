@@ -527,6 +527,43 @@ button:disabled {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.location-custom-input {
+  margin-top: 8px;
+}
+
+.intent-location-tools {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fafdff;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.intent-location-tools-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.location-use-btn,
+#intent-use-location-btn {
+  width: auto;
+  min-height: 36px;
+  padding: 0 12px;
+}
+
+.location-status[data-tone="success"],
+#intent-location-status[data-tone="success"] {
+  color: #1c7f57;
+}
+
+.location-status[data-tone="error"],
+#intent-location-status[data-tone="error"] {
+  color: #a13f54;
+}
+
 .intent-manual-wrap {
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -1423,6 +1460,50 @@ li {
   padding: 8px;
   line-height: 1.5;
   white-space: normal;
+}
+
+#chat-interest-activity-card {
+  margin-bottom: 8px;
+}
+
+.chat-activity-card {
+  margin-top: 8px;
+  border: 1px solid #bfd9f3;
+  background: linear-gradient(180deg, #f7fbff, #eef6ff);
+  border-radius: 10px;
+  padding: 8px;
+  display: grid;
+  gap: 4px;
+}
+
+.chat-activity-title {
+  font-size: 0.84rem;
+  font-weight: 700;
+  color: #1f4f78;
+}
+
+.chat-activity-meta {
+  font-size: 0.78rem;
+  color: #345270;
+  line-height: 1.4;
+}
+
+.chat-activity-desc {
+  margin: 2px 0 0;
+  font-size: 0.78rem;
+  color: #314d68;
+  line-height: 1.45;
+}
+
+.chat-activity-map-link {
+  width: auto;
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 0.78rem;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .travel-form {
