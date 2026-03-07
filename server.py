@@ -779,12 +779,31 @@ def normalize_interest_category(interest: str) -> str:
         return "attractions"
     mapping = {
         "美食": "restaurant",
+        "聚餐": "restaurant",
+        "聚会吃饭": "restaurant",
+        "聚会": "restaurant",
+        "dinner": "restaurant",
+        "group dining": "restaurant",
         "food": "restaurant",
         "ramen": "restaurant",
         "cafe": "cafe",
         "咖啡": "cafe",
+        "桌游": "board game cafe",
+        "桌上游戏": "board game cafe",
+        "board game": "board game cafe",
+        "boardgame": "board game cafe",
         "看展": "museum",
+        "逛展": "museum",
+        "展览": "museum",
+        "art gallery": "museum",
         "museum": "museum",
+        "露营": "campground",
+        "camp": "campground",
+        "camping": "campground",
+        "野餐": "park",
+        "picnic": "park",
+        "公园": "park",
+        "park": "park",
         "city walk": "tourist attractions",
         "citywalk": "tourist attractions",
         "shopping": "shopping mall",
@@ -1232,16 +1251,53 @@ def generate_plan(intent: Dict[str, Any], seed_points: Optional[List[str]] = Non
     return plan
 
 
-def create_activity(plan: Dict[str, Any]) -> Dict[str, Any]:
+def parse_stop_datetime(stop: Dict[str, Any], fallback: datetime) -> datetime:
+    d = normalize_text(stop.get("date"))
+    t = normalize_text(stop.get("time")) or "19:30"
+    if d:
+        parsed = parse_datetime(f"{d}T{t}")
+        if parsed:
+            return parsed
+        parsed = parse_datetime(f"{d}T{t}:00")
+        if parsed:
+            return parsed
+    return fallback
+
+
+def create_activity(plan: Dict[str, Any], user: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     code = f"ACT-{random.randint(1000, 9999)}"
     token = base64.urlsafe_b64encode(json_dumps({"code": code, "at": now_iso()}).encode("utf-8")).decode("utf-8")[:24]
     route = plan.get("route") if isinstance(plan.get("route"), list) else []
     schedule = " | ".join([f"{normalize_text(x.get('date'))} {normalize_text(x.get('time'))} {normalize_text(x.get('point'))}".strip() for x in route])
+    intent = plan.get("intent") if isinstance(plan.get("intent"), dict) else {}
+    city = normalize_text(intent.get("city"))
+    country = normalize_text(intent.get("country"))
+    if not city or not country:
+        city, country = infer_city_country(normalize_text(intent.get("area")))
+
+    fallback_start = datetime.now(timezone.utc) + timedelta(hours=2)
+    first_stop = route[0] if route else {}
+    last_stop = route[-1] if route else {}
+    start_dt = parse_stop_datetime(first_stop, fallback_start)
+    end_dt = parse_stop_datetime(last_stop, start_dt + timedelta(hours=3))
+    if end_dt <= start_dt:
+        end_dt = start_dt + timedelta(hours=3)
+
+    venue_name = normalize_text(first_stop.get("point") or first_stop.get("matchedName") or "待定集合点")
+    geo = parse_geo({"lat": first_stop.get("lat"), "lng": first_stop.get("lng")})
+    creator_public = to_public_user(user) if user else {"id": "system", "username": "system", "displayName": "TripWeaver"}
+    owner_id = user["id"] if user else ""
+
     activity = {
         "id": new_id("ACT"),
         "code": code,
         "joinToken": token,
         "title": normalize_text(plan.get("title") or "活动"),
+        "city": city,
+        "country": country,
+        "venueName": venue_name,
+        "startAt": start_dt.isoformat(),
+        "endAt": end_dt.isoformat(),
         "route": route,
         "budgetEstimate": plan.get("budgetEstimate") or "预算待定",
         "reason": plan.get("reason") or "",
@@ -1250,7 +1306,29 @@ def create_activity(plan: Dict[str, Any]) -> Dict[str, Any]:
         "link": f"/join/{token}",
         "createdAt": now_iso(),
     }
-    upsert_doc("activities", activity)
+    local_event = {
+        "id": new_id("EVT"),
+        "title": activity["title"],
+        "category": "route_launch",
+        "city": city,
+        "country": country,
+        "venueName": venue_name,
+        "startAt": start_dt.isoformat(),
+        "endAt": end_dt.isoformat(),
+        "description": normalize_text(plan.get("reason")),
+        "price": 0,
+        "currency": "SGD",
+        "ticketUrl": "",
+        "tags": parse_tags(["route", "路线", normalize_text(intent.get("interest"))]),
+        "source": "activity_route",
+        "creator": creator_public,
+        "rsvps": [{"userId": user["id"], "status": "going", "at": now_iso(), "user": creator_public}] if user else [],
+        "createdAt": now_iso(),
+        "geo": geo,
+    }
+    upsert_doc("local_events", local_event, owner_id=owner_id)
+    activity["localEventId"] = local_event["id"]
+    upsert_doc("activities", activity, owner_id=owner_id)
     return activity
 
 
@@ -1291,7 +1369,15 @@ def infer_intent_from_messages(messages: List[Dict[str, Any]]) -> Dict[str, Any]
         budget = "高预算"
 
     interest = "美食"
-    if any(k in text for k in ["museum", "展", "gallery"]):
+    if any(k in text for k in ["board game", "boardgame", "桌游", "桌上游戏"]):
+        interest = "桌游"
+    elif any(k in text for k in ["camping", "camp", "露营"]):
+        interest = "露营"
+    elif any(k in text for k in ["picnic", "野餐", "公园"]):
+        interest = "野餐"
+    elif any(k in text for k in ["group dining", "dinner", "聚餐", "聚会吃饭"]):
+        interest = "聚餐"
+    elif any(k in text for k in ["museum", "展", "gallery", "逛展", "展览"]):
         interest = "看展"
     elif any(k in text for k in ["cafe", "coffee", "咖啡"]):
         interest = "咖啡"
@@ -2145,10 +2231,11 @@ def api_generate_plan(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @app.post("/api/create-activity")
-def api_create_activity(payload: Dict[str, Any]) -> Dict[str, Any]:
+def api_create_activity(payload: Dict[str, Any], request: Request) -> Dict[str, Any]:
     if not isinstance(payload, dict) or not isinstance(payload.get("route"), list) or not payload.get("route"):
         raise HTTPException(status_code=400, detail="Invalid plan payload")
-    return create_activity(payload)
+    user = optional_auth_user(request)
+    return create_activity(payload, user=user)
 
 
 @app.get("/api/activities/{code}")
@@ -2227,6 +2314,34 @@ def get_local_events(city: str = "", country: str = "", category: str = "", q: s
         key = normalize_key(q)
         events = [e for e in events if key in normalize_key(f"{e.get('title', '')} {e.get('description', '')} {','.join(e.get('tags') or [])}")]
     return events
+
+
+@app.get("/api/discovery/upcoming-routes")
+def discovery_upcoming_routes(city: str = "", country: str = "", limit: int = 10) -> List[Dict[str, Any]]:
+    safe_limit = clamp(limit, 1, 30)
+    events = list_docs("local_events", limit=1200)
+    now_dt = datetime.now(timezone.utc)
+    result: List[Tuple[datetime, Dict[str, Any]]] = []
+
+    for item in events:
+        source = normalize_key(item.get("source"))
+        category = normalize_key(item.get("category"))
+        if source != "activity_route" and "route" not in category:
+            continue
+        if city and normalize_key(city) not in normalize_key(item.get("city")):
+            continue
+        if country and normalize_key(country) not in normalize_key(item.get("country")):
+            continue
+
+        start_dt = parse_datetime(item.get("startAt")) or parse_datetime(item.get("createdAt"))
+        if not start_dt:
+            continue
+        if start_dt < now_dt - timedelta(hours=8):
+            continue
+        result.append((start_dt, item))
+
+    result.sort(key=lambda x: x[0])
+    return [item for _, item in result[:safe_limit]]
 
 
 @app.post("/api/local/events")

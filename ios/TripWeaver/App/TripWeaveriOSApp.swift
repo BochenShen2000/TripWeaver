@@ -39,6 +39,7 @@ struct RootTabView: View {
                     Label("账号", systemImage: "person.crop.circle")
                 }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .toolbarBackground(.visible, for: .tabBar)
         .toolbarBackground(.ultraThinMaterial, for: .tabBar)
     }

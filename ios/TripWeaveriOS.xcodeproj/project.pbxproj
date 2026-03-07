@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		065F73E8C87A9447EDB4F234 /* AuthView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58E66CB4907167141BD24C67 /* AuthView.swift */; };
 		73314AB6284D2F56DE8E7ABF /* SocialView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53D69FD5F22377B86108D758 /* SocialView.swift */; };
+		7E1042C1A5EAC63EE383C546 /* CommunityChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E31085FD13E716C8957D70C5 /* CommunityChatView.swift */; };
 		7E4339ABD3BF916100F31C5D /* SessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFF4EE21314564F41B10A0D3 /* SessionStore.swift */; };
 		85B5A65AA56D93F52DC2A520 /* ExploreView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BED8BBBF737291FE0CC61817 /* ExploreView.swift */; };
 		8E96EBF7E40606948E2D82E0 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 8409E94EE8592ECBA0C115CF /* Assets.xcassets */; };
@@ -31,6 +32,7 @@
 		89C2E20B1032651E43C9D498 /* TripWeaveriOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TripWeaveriOSApp.swift; sourceTree = "<group>"; };
 		BED8BBBF737291FE0CC61817 /* ExploreView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExploreView.swift; sourceTree = "<group>"; };
 		CFF4EE21314564F41B10A0D3 /* SessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStore.swift; sourceTree = "<group>"; };
+		E31085FD13E716C8957D70C5 /* CommunityChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommunityChatView.swift; sourceTree = "<group>"; };
 		FBA07FCB1319FFB215DC68EC /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		FE1932E2F53E45D8C6869116 /* PlanView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -120,6 +122,7 @@
 		D9E0FA4CFACD0F9484FF9CF8 /* Explore */ = {
 			isa = PBXGroup;
 			children = (
+				E31085FD13E716C8957D70C5 /* CommunityChatView.swift */,
 				BED8BBBF737291FE0CC61817 /* ExploreView.swift */,
 			);
 			path = Explore;
@@ -212,6 +215,7 @@
 				F4EABA749342A5F090195EC5 /* APIClient.swift in Sources */,
 				EEB89FDF4D6FF9A58D210A73 /* AppTheme.swift in Sources */,
 				065F73E8C87A9447EDB4F234 /* AuthView.swift in Sources */,
+				7E1042C1A5EAC63EE383C546 /* CommunityChatView.swift in Sources */,
 				85B5A65AA56D93F52DC2A520 /* ExploreView.swift in Sources */,
 				BC59811AA11A075814BC76DB /* Models.swift in Sources */,
 				D11FFECEFFEBBA99EFFB01F0 /* PlaceMapView.swift in Sources */,
@@ -234,6 +238,7 @@
 				INFOPLIST_KEY_CFBundleDisplayName = TripWeaver;
 				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -254,6 +259,7 @@
 				INFOPLIST_KEY_CFBundleDisplayName = TripWeaver;
 				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",

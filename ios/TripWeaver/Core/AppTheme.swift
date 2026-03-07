@@ -63,6 +63,7 @@ struct AppPage<Content: View>: View {
             .frame(maxWidth: AppLayout.maxContentWidth)
             .frame(maxWidth: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .scrollDismissesKeyboard(.interactively)
         .contentMargins(.bottom, 8, for: .scrollContent)
         .safeAreaPadding(.bottom, 4)

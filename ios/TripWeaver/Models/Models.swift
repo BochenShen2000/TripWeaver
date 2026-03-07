@@ -106,6 +106,12 @@ struct GenerateActivityResponse: Codable {
     let title: String?
     let schedule: String?
     let link: String?
+    let startAt: String?
+    let endAt: String?
+    let venueName: String?
+    let city: String?
+    let country: String?
+    let localEventId: String?
 }
 
 struct DiscoveryPlace: Codable, Identifiable {
@@ -166,4 +172,33 @@ struct CampusGroup: Codable, Identifiable {
     let campusName: String?
     let members: [AuthUser]?
     let createdAt: String?
+}
+
+struct InterestGroup: Codable, Identifiable {
+    let id: String
+    let name: String
+    let interest: String?
+    let city: String?
+    let country: String?
+    let description: String?
+    let campusOnly: Bool?
+    let nextMeetupAt: String?
+    let members: [AuthUser]?
+    let createdAt: String?
+}
+
+struct DiscoveryRouteEvent: Codable, Identifiable {
+    let id: String
+    let title: String
+    let category: String?
+    let city: String?
+    let country: String?
+    let venueName: String?
+    let startAt: String?
+    let endAt: String?
+    let description: String?
+    let price: Double?
+    let currency: String?
+    let tags: [String]?
+    let source: String?
 }

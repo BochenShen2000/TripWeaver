@@ -82,6 +82,22 @@ struct PlanView: View {
                             intent.timeSlot = "周末半天"
                             intent.interest = "咖啡+看展"
                         }
+                        quickTag("桌游局") {
+                            intent.timeSlot = "今天晚上"
+                            intent.interest = "桌游"
+                        }
+                        quickTag("公园野餐") {
+                            intent.timeSlot = "周末半天"
+                            intent.interest = "野餐"
+                        }
+                        quickTag("露营日") {
+                            intent.timeSlot = "周末全天"
+                            intent.interest = "露营"
+                        }
+                        quickTag("朋友聚餐") {
+                            intent.timeSlot = "今天晚上"
+                            intent.interest = "聚餐"
+                        }
                         quickTag("情侣约会") {
                             intent.companion = "情侣"
                             intent.people = "2"
@@ -100,7 +116,7 @@ struct PlanView: View {
                 PlanInputField(title: "人数", placeholder: "2", text: $intent.people, keyboard: .numberPad)
                 PlanInputField(title: "预算", placeholder: "低预算/中预算/高预算", text: $intent.budget)
                 PlanInputField(title: "时间段", placeholder: "今天晚上/周末半天", text: $intent.timeSlot)
-                PlanInputField(title: "兴趣", placeholder: "美食/看展/city walk", text: $intent.interest)
+                PlanInputField(title: "兴趣", placeholder: "美食/看展/city walk/桌游/露营/野餐/聚餐", text: $intent.interest)
                 PlanInputField(title: "区域", placeholder: "Tokyo, Japan", text: $intent.area)
 
                 DisclosureGroup(isExpanded: $showAdvanced) {
@@ -261,9 +277,20 @@ struct PlanView: View {
                 token: session.token,
                 body: body
             )
-            activityMessage = "活动已发起：\(result.code ?? "-")"
+            let when = formatShortTime(result.startAt)
+            let whereText = result.venueName ?? "待定地点"
+            activityMessage = "活动已发起：\(result.code ?? "-") · \(when) @ \(whereText)"
         } catch {
             activityMessage = "发起失败：\(error.localizedDescription)"
         }
+    }
+
+    private func formatShortTime(_ iso: String?) -> String {
+        guard let iso, !iso.isEmpty else { return "时间待定" }
+        let inFmt = ISO8601DateFormatter()
+        guard let date = inFmt.date(from: iso) else { return iso }
+        let outFmt = DateFormatter()
+        outFmt.dateFormat = "MM-dd HH:mm"
+        return outFmt.string(from: date)
     }
 }
