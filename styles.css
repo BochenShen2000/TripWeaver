@@ -164,6 +164,73 @@ body {
   color: #146a4a;
 }
 
+.flow-coach {
+  border: 1px solid #cfe0f2;
+  background: linear-gradient(130deg, rgba(244, 250, 255, 0.95) 0%, rgba(237, 246, 255, 0.92) 100%);
+  border-radius: 14px;
+  padding: 11px 12px;
+  display: grid;
+  gap: 10px;
+  box-shadow: var(--shadow-soft);
+}
+
+.flow-coach-main {
+  display: grid;
+  gap: 4px;
+}
+
+.flow-coach-step {
+  margin: 0;
+  color: #3b5f84;
+  font-size: 0.74rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 800;
+}
+
+.flow-coach-main strong {
+  font-size: 0.95rem;
+  color: #183f63;
+}
+
+.flow-coach-main p:last-child {
+  margin: 0;
+  color: #456281;
+  font-size: 0.82rem;
+  line-height: 1.42;
+}
+
+.flow-coach-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.intent-presets {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 2px 0 10px;
+}
+
+.intent-preset-btn {
+  min-height: 34px;
+  width: auto;
+  border-radius: 999px;
+  border: 1px solid #c7dcef;
+  background: #f3f9ff;
+  color: #1f4f78;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 0 11px;
+}
+
+.intent-preset-btn.active {
+  background: linear-gradient(180deg, #1f5b8d, #0f4c81);
+  border-color: #0f4c81;
+  color: #fff;
+}
+
 .quick-nav {
   position: sticky;
   top: 10px;
@@ -1325,6 +1392,10 @@ pre {
     padding: 8px 10px;
   }
 
+  .flow-coach-actions {
+    grid-template-columns: 1fr;
+  }
+
   .explore-tabs {
     flex-wrap: nowrap;
     overflow-x: auto;
@@ -1393,6 +1464,20 @@ pre {
   .app-topbar-pills {
     width: 100%;
     justify-content: flex-start;
+  }
+
+  .flow-coach {
+    padding: 10px;
+  }
+
+  .intent-presets {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .intent-preset-btn {
+    flex: 0 0 auto;
   }
 
   .chat-form,

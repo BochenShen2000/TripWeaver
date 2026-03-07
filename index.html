@@ -37,6 +37,18 @@
         </div>
       </section>
 
+      <section id="flow-coach" class="flow-coach" aria-live="polite">
+        <div class="flow-coach-main">
+          <p id="flow-coach-step" class="flow-coach-step">下一步建议</p>
+          <strong id="flow-coach-title">先从“发现活动”开始</strong>
+          <p id="flow-coach-desc">去发现中心选一个地点/活动，再进入找搭子讨论。</p>
+        </div>
+        <div class="flow-coach-actions">
+          <button id="flow-coach-primary" type="button" class="btn-primary">去发现</button>
+          <button id="flow-coach-secondary" type="button" class="btn-secondary">快速生成路线</button>
+        </div>
+      </section>
+
       <section class="card mobile-screen-section" data-screen="plan" id="workflow-section">
         <h2>产品主流程（从发现到成局）</h2>
         <p class="meta">发现活动 → 找到人 → 生成方案 → 发起活动 → 报名成局</p>
@@ -93,6 +105,11 @@
 
       <section class="card mobile-screen-section" data-screen="plan" id="intent-section">
         <h2>1) 输入活动需求</h2>
+        <div id="intent-presets" class="intent-presets">
+          <button type="button" class="intent-preset-btn active" data-preset="tonight_food">今晚轻松局</button>
+          <button type="button" class="intent-preset-btn" data-preset="weekend_citywalk">周末城市漫游</button>
+          <button type="button" class="intent-preset-btn" data-preset="gallery_date">展览约会局</button>
+        </div>
         <form id="intent-form" class="form-grid">
           <label>
             你和谁去
@@ -149,6 +166,9 @@
 
           <button type="submit" class="btn-primary">AI 生成活动方案</button>
         </form>
+        <div class="actions">
+          <button id="intent-generate-fast-btn" type="button" class="btn-secondary">按当前预设一键生成</button>
+        </div>
       </section>
 
       <section class="card mobile-screen-section" data-screen="social" id="auth-section">

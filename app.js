@@ -1,4 +1,6 @@
 const form = document.getElementById("intent-form");
+const intentPresets = document.getElementById("intent-presets");
+const intentGenerateFastBtn = document.getElementById("intent-generate-fast-btn");
 const planSection = document.getElementById("plan-section");
 const planOutput = document.getElementById("plan-output");
 const createActivityBtn = document.getElementById("create-activity");
@@ -110,6 +112,11 @@ const appScreenTitle = document.getElementById("app-screen-title");
 const appScreenSubtitle = document.getElementById("app-screen-subtitle");
 const flowProgressPill = document.getElementById("flow-progress-pill");
 const authQuickPill = document.getElementById("auth-quick-pill");
+const flowCoachStep = document.getElementById("flow-coach-step");
+const flowCoachTitle = document.getElementById("flow-coach-title");
+const flowCoachDesc = document.getElementById("flow-coach-desc");
+const flowCoachPrimary = document.getElementById("flow-coach-primary");
+const flowCoachSecondary = document.getElementById("flow-coach-secondary");
 const exploreTabs = document.getElementById("explore-tabs");
 const exploreTabButtons = Array.from(document.querySelectorAll(".explore-tab-btn[data-explore-target]"));
 const explorePanels = Array.from(document.querySelectorAll(".explore-panel-section[data-explore-panel]"));
@@ -169,9 +176,48 @@ const SCREEN_META = {
   explore: { title: "发现", subtitle: "活动与灵感" },
   travel: { title: "旅行", subtitle: "跨国与协同" },
 };
+const INTENT_PRESETS = {
+  tonight_food: {
+    label: "今晚轻松局",
+    intent: {
+      companion: "朋友",
+      people: "2",
+      budget: "中预算",
+      timeSlot: "今天晚上",
+      interest: "美食",
+      area: "新加坡市中心",
+    },
+  },
+  weekend_citywalk: {
+    label: "周末城市漫游",
+    intent: {
+      companion: "同学",
+      people: "3",
+      budget: "中预算",
+      timeSlot: "周末半天",
+      interest: "city walk",
+      area: "新加坡市中心",
+    },
+  },
+  gallery_date: {
+    label: "展览约会局",
+    intent: {
+      companion: "情侣",
+      people: "2",
+      budget: "中预算",
+      timeSlot: "周末半天",
+      interest: "看展",
+      area: "新加坡市中心",
+    },
+  },
+};
 let currentExplorePanel = "official";
 let exploreManualOverrideUntil = 0;
 let toastTimer = null;
+const ROUTE_JOIN_PAYLOAD_RE = /\[ROUTE_JOIN_PAYLOAD\]([A-Za-z0-9_-]+)\[\/ROUTE_JOIN_PAYLOAD\]/;
+let activeIntentPreset = "tonight_food";
+let flowCoachPrimaryAction = null;
+let flowCoachSecondaryAction = null;
 
 const api = {
   async request(path, options = {}) {
@@ -501,6 +547,7 @@ function renderAuthState() {
     authQuickPill.textContent = currentUser ? currentUser.displayName : "游客模式";
     authQuickPill.classList.toggle("online", Boolean(currentUser));
   }
+  updateFlowCoach();
 }
 
 function escapeHtml(str) {
@@ -554,6 +601,164 @@ function updateFlowProgressPill() {
   if (!flowProgressPill) return;
   const done = FLOW_ORDER.reduce((count, step) => count + (flowState.steps[step] ? 1 : 0), 0);
   flowProgressPill.textContent = `流程 ${done}/${FLOW_ORDER.length}`;
+}
+
+function setFlowCoachConfig(config = {}) {
+  if (!flowCoachStep || !flowCoachTitle || !flowCoachDesc || !flowCoachPrimary || !flowCoachSecondary) return;
+  flowCoachStep.textContent = config.step || "下一步建议";
+  flowCoachTitle.textContent = config.title || "继续推进主流程";
+  flowCoachDesc.textContent = config.desc || "按推荐步骤继续操作。";
+
+  flowCoachPrimary.textContent = config.primaryLabel || "继续";
+  flowCoachPrimary.disabled = typeof config.primaryAction !== "function";
+  flowCoachPrimaryAction = typeof config.primaryAction === "function" ? config.primaryAction : null;
+
+  if (config.secondaryLabel && typeof config.secondaryAction === "function") {
+    flowCoachSecondary.classList.remove("hidden");
+    flowCoachSecondary.textContent = config.secondaryLabel;
+    flowCoachSecondary.disabled = false;
+    flowCoachSecondaryAction = config.secondaryAction;
+  } else {
+    flowCoachSecondary.classList.add("hidden");
+    flowCoachSecondaryAction = null;
+  }
+}
+
+function updateFlowCoach() {
+  if (!flowCoachTitle) return;
+  if (!currentUser) {
+    setFlowCoachConfig({
+      step: "启动前准备",
+      title: "先登录，再开始完整流程",
+      desc: "登录后才能发起活动、发送群聊与成团分享。",
+      primaryLabel: "去登录",
+      primaryAction: () => navigateToScreen("social", "auth-section"),
+      secondaryLabel: "先去发现",
+      secondaryAction: () => jumpToFlowStep("discover"),
+    });
+    return;
+  }
+
+  const nextStep = getNextFlowStep();
+  if (!nextStep) {
+    setFlowCoachConfig({
+      step: "流程完成",
+      title: "已跑通从发现到成局",
+      desc: "可以复用当前路线继续发起今晚成团，或重置流程再做新局。",
+      primaryLabel: currentPlan ? "今晚就去成团" : "重置流程",
+      primaryAction: currentPlan ? () => launchTonightGroup({ scene: currentPlan.title || "今晚路线" }) : () => resetFlowState(),
+      secondaryLabel: "重置流程",
+      secondaryAction: () => resetFlowState(),
+    });
+    return;
+  }
+
+  if (nextStep === "discover") {
+    setFlowCoachConfig({
+      step: "1/5 发现活动",
+      title: "先选一个地点或活动切口",
+      desc: "从发现中心选一个更具体的场景，后续成团会更快。",
+      primaryLabel: "去发现",
+      primaryAction: () => jumpToFlowStep("discover"),
+      secondaryLabel: "按预设生成路线",
+      secondaryAction: () => generatePlanFromIntentForm("流程助手快速生成", "flow_coach_generate"),
+    });
+    return;
+  }
+
+  if (nextStep === "match") {
+    const canSendPlan = Boolean(currentPlan && selectedChatTarget);
+    setFlowCoachConfig({
+      step: "2/5 找到人",
+      title: canSendPlan ? "把路线发进当前会话" : "先进入社交会话找搭子",
+      desc: canSendPlan
+        ? "你已选中会话，可直接抛出路线并收集多方需求。"
+        : "选择好友或群聊，先把时间/预算/必去点聊清楚。",
+      primaryLabel: canSendPlan ? "发送当前路线" : "去社交",
+      primaryAction: canSendPlan
+        ? async () => {
+            await sendCurrentPlanToSelectedChat();
+            showToast("已发送当前路线到会话。");
+          }
+        : () => jumpToFlowStep("match"),
+      secondaryLabel: "插入讨论模板",
+      secondaryAction: async () => {
+        await openChatTarget(selectedChatTarget || { type: "global", id: "global", name: "Global 群聊" });
+        navigateToScreen("social", "social-section");
+        appendSnippetToThreadInput(routeDiscussionTemplate);
+      },
+    });
+    return;
+  }
+
+  if (nextStep === "plan") {
+    setFlowCoachConfig({
+      step: "3/5 生成方案",
+      title: currentPlan ? "当前路线已可执行" : "生成可执行路线",
+      desc: currentPlan ? "你可以继续优化路线，或直接进入发起活动。" : "把需求转成时间顺序和地图点位。",
+      primaryLabel: currentPlan ? "查看路线" : "生成路线",
+      primaryAction: currentPlan
+        ? () => navigateToScreen("plan", "plan-section")
+        : () => generatePlanFromIntentForm("流程助手生成路线", "flow_coach_generate"),
+      secondaryLabel: "去输入需求",
+      secondaryAction: () => navigateToScreen("plan", "intent-section"),
+    });
+    return;
+  }
+
+  if (nextStep === "launch") {
+    setFlowCoachConfig({
+      step: "4/5 发起活动",
+      title: "把路线变成可报名活动",
+      desc: "建议直接发“今晚就去”，同步群聊并带报名链接。",
+      primaryLabel: currentPlan ? "今晚就去成团" : "先生成路线",
+      primaryAction: currentPlan ? () => launchTonightGroup({ scene: currentPlan.title || "今晚路线" }) : () => jumpToFlowStep("plan"),
+      secondaryLabel: currentPlan ? "仅创建活动" : "去发现",
+      secondaryAction: currentPlan
+        ? () => createAndRenderActivityFromPlan(currentPlan, true)
+        : () => jumpToFlowStep("discover"),
+    });
+    return;
+  }
+
+  if (nextStep === "join") {
+    const hasPlan = Boolean(currentPlan && Array.isArray(currentPlan.route) && currentPlan.route.length);
+    setFlowCoachConfig({
+      step: "5/5 报名成局",
+      title: "把活动分享出去，拉人报名",
+      desc: currentActivity
+        ? "活动已创建，直接分享链接即可成局。"
+        : hasPlan
+          ? "先创建活动，再做分享与报名。"
+          : "当前还没有路线，请先生成路线后再成团。",
+      primaryLabel: currentActivity ? "去分享活动" : hasPlan ? "先创建活动" : "先生成路线",
+      primaryAction: currentActivity
+        ? () => shareBtn.click()
+        : hasPlan
+          ? () => createAndRenderActivityFromPlan(currentPlan, true)
+          : () => jumpToFlowStep("plan"),
+      secondaryLabel: currentActivity ? "去活动页" : "去活动广场",
+      secondaryAction: () => (currentActivity ? navigateToScreen("plan", "activity-section") : jumpToFlowStep("join")),
+    });
+  }
+}
+
+async function runFlowCoachAction(which = "primary") {
+  const btn = which === "secondary" ? flowCoachSecondary : flowCoachPrimary;
+  const action = which === "secondary" ? flowCoachSecondaryAction : flowCoachPrimaryAction;
+  if (!btn || typeof action !== "function") return;
+  const text = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "处理中...";
+  try {
+    await action();
+  } catch (err) {
+    alert(err?.message || "执行失败，请重试。");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = text;
+    updateFlowCoach();
+  }
 }
 
 function renderItemMore(summary, bodyHtml) {
@@ -691,6 +896,7 @@ function renderFlowState() {
   }
   updateFlowProgressPill();
   updateExploreRecommendHint();
+  updateFlowCoach();
 }
 
 function markFlowStep(step, note = "") {
@@ -866,6 +1072,38 @@ function applyIntentToForm(intent) {
   }
 }
 
+function collectIntentFromForm() {
+  return Object.fromEntries(new FormData(form).entries());
+}
+
+function setActiveIntentPreset(presetKey) {
+  if (!INTENT_PRESETS[presetKey]) return;
+  activeIntentPreset = presetKey;
+  if (!intentPresets) return;
+  intentPresets.querySelectorAll(".intent-preset-btn[data-preset]").forEach((btn) => {
+    btn.classList.toggle("active", btn.getAttribute("data-preset") === presetKey);
+  });
+}
+
+function applyIntentPreset(presetKey, silent = false) {
+  const preset = INTENT_PRESETS[presetKey];
+  if (!preset) return;
+  applyIntentToForm(preset.intent);
+  setActiveIntentPreset(presetKey);
+  const label = preset.label || "预设";
+  if (!silent) showToast(`已切换预设：${label}`);
+}
+
+async function generatePlanFromIntentForm(note = "手动输入需求", eventName = "input_submit") {
+  const intent = collectIntentFromForm();
+  await api.logEvent(eventName, intent);
+  const plan = await api.generatePlan(intent);
+  await applyGeneratedPlan(plan, note);
+  currentActivity = null;
+  await refreshEvents();
+  return plan;
+}
+
 function buildIntentFromSeed(seed = {}) {
   const tags = Array.isArray(seed.tags)
     ? seed.tags
@@ -988,7 +1226,7 @@ async function launchTonightGroup(options = {}) {
     const activity = await createAndRenderActivityFromPlan(plan, false);
 
     await openChatTarget({ type: "global", id: "global", name: "Global 群聊" });
-    await sendContentToSelectedChat(buildTonightLaunchMessage(plan, activity, scene));
+    await sendContentToSelectedChat(appendRouteJoinPayloadToMessage(buildTonightLaunchMessage(plan, activity, scene), plan));
     await sendContentToSelectedChat(buildTonightDiscussionTemplate(plan));
 
     markFlowStep("join", "今晚成团消息已发群");
@@ -1159,11 +1397,19 @@ function renderChatThread(messages) {
       const self = senderId && senderId === currentUser?.id;
       const who = m.user?.displayName || m.fromUserId || "Unknown";
       const geo = m.geo?.label ? ` | ${escapeHtml(m.geo.label)}` : "";
-      const text = String(m.content || "");
-      const isRouteLike = text.includes("【候选路线】") || text.includes("【路线讨论模板】");
+      const rawText = String(m.content || "");
+      const routeParsed = parseRouteJoinMessage(rawText);
+      const text = routeParsed.displayText || rawText;
+      const isRouteLike = routeParsed.hasPayload || text.includes("【候选路线】") || text.includes("【路线讨论模板】");
+      const joinBtn = routeParsed.hasPayload
+        ? `<div class="actions"><button class="btn-primary chat-route-join-btn" type="button" data-route-token="${routeParsed.token}">一键加入这条路线</button></div>`
+        : "";
       return `<article class="chat-item ${self ? "self" : ""}"><div class="chat-meta">${escapeHtml(who)} · ${new Date(
         m.createdAt,
-      ).toLocaleString()}${geo}</div><p class="chat-content ${isRouteLike ? "route" : ""}">${escapeHtml(text).replaceAll("\n", "<br/>")}</p></article>`;
+      ).toLocaleString()}${geo}</div><p class="chat-content ${isRouteLike ? "route" : ""}">${escapeHtml(text).replaceAll(
+        "\n",
+        "<br/>",
+      )}</p>${joinBtn}</article>`;
     })
     .join("");
   chatThreadMessages.scrollTop = chatThreadMessages.scrollHeight;
@@ -1240,6 +1486,7 @@ async function openChatTarget(target) {
   chatThreadInput.placeholder = placeholderMap[target.type] || "输入消息...";
   markActiveChatTarget();
   updateChatRouteContext();
+  updateFlowCoach();
   if (target.type !== "global") {
     markFlowStep("match", target.name || metaMap[target.type] || "已进入聊天");
   }
@@ -1885,6 +2132,146 @@ function formatStopDateTime(step) {
   return "时间待定";
 }
 
+function encodeUtf8Base64Url(text) {
+  const bytes = new TextEncoder().encode(String(text || ""));
+  let binary = "";
+  bytes.forEach((b) => {
+    binary += String.fromCharCode(b);
+  });
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function decodeUtf8Base64Url(token) {
+  const raw = String(token || "").trim();
+  if (!raw) return "";
+  const base64 = raw.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = `${base64}${"=".repeat((4 - (base64.length % 4)) % 4)}`;
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new TextDecoder().decode(bytes);
+}
+
+function buildJoinableRoutePlanPayload(plan, maxStops = 8) {
+  const routeSource = Array.isArray(plan?.route) ? plan.route : [];
+  const route = routeSource
+    .slice(0, Math.max(2, Math.min(maxStops, routeSource.length || 2)))
+    .map((step) => ({
+      date: String(step?.date || "").trim(),
+      time: String(step?.time || "").trim(),
+      point: String(step?.point || "").trim(),
+      matchedName: String(step?.matchedName || "").trim(),
+      lat: Number.isFinite(Number(step?.lat)) ? Number(step.lat) : null,
+      lng: Number.isFinite(Number(step?.lng)) ? Number(step.lng) : null,
+      verified: Boolean(step?.verified),
+      intro: String(step?.intro || "")
+        .trim()
+        .slice(0, 72),
+    }))
+    .filter((step) => step.point);
+  if (route.length < 2) return null;
+  const verifiedCount = route.filter((step) => step.verified).length;
+  const routePath = route
+    .filter((step) => Number.isFinite(step.lat) && Number.isFinite(step.lng))
+    .map((step) => ({ lat: step.lat, lng: step.lng }));
+  return {
+    id: String(plan?.id || `CHAT-${Date.now()}`),
+    title: String(plan?.title || "群聊路线").trim(),
+    budgetEstimate: String(plan?.budgetEstimate || "预算待定").trim(),
+    reason: String(plan?.reason || "来自群聊分享路线，可一键加入。").trim(),
+    route,
+    routePath,
+    validationSummary: {
+      total: route.length,
+      verified: verifiedCount,
+      replaced: 0,
+      fromChat: true,
+    },
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+function encodeRouteJoinPayloadToken(plan) {
+  if (!plan || !Array.isArray(plan.route) || !plan.route.length) return "";
+  const maxTryStops = Math.min(8, plan.route.length);
+  for (let stops = maxTryStops; stops >= 2; stops -= 1) {
+    const payload = buildJoinableRoutePlanPayload(plan, stops);
+    if (!payload) continue;
+    const encoded = encodeUtf8Base64Url(JSON.stringify(payload));
+    if (encoded.length <= 1350) return encoded;
+  }
+  return "";
+}
+
+function appendRouteJoinPayloadToMessage(message, plan) {
+  const text = String(message || "").trim();
+  if (!text) return text;
+  const token = encodeRouteJoinPayloadToken(plan);
+  if (!token) return text;
+  return `${text}\n[ROUTE_JOIN_PAYLOAD]${token}[/ROUTE_JOIN_PAYLOAD]`;
+}
+
+function parseRouteJoinMessage(content) {
+  const raw = String(content || "");
+  const matched = raw.match(ROUTE_JOIN_PAYLOAD_RE);
+  if (!matched) {
+    return { displayText: raw, hasPayload: false, token: "" };
+  }
+  return {
+    displayText: raw.replace(matched[0], "").trim(),
+    hasPayload: true,
+    token: matched[1] || "",
+  };
+}
+
+function decodeRouteJoinPayloadToken(token) {
+  try {
+    const json = decodeUtf8Base64Url(token);
+    const payload = JSON.parse(json);
+    const route = Array.isArray(payload?.route)
+      ? payload.route
+          .map((step) => ({
+            date: String(step?.date || "").trim(),
+            time: String(step?.time || "").trim(),
+            point: String(step?.point || "").trim(),
+            matchedName: String(step?.matchedName || "").trim(),
+            lat: Number.isFinite(Number(step?.lat)) ? Number(step.lat) : null,
+            lng: Number.isFinite(Number(step?.lng)) ? Number(step.lng) : null,
+            verified: Boolean(step?.verified),
+            intro: String(step?.intro || "").trim(),
+          }))
+          .filter((step) => step.point)
+      : [];
+    if (route.length < 2) return null;
+    const routePath =
+      Array.isArray(payload?.routePath) && payload.routePath.length
+        ? payload.routePath
+            .map((p) => ({
+              lat: Number.isFinite(Number(p?.lat)) ? Number(p.lat) : null,
+              lng: Number.isFinite(Number(p?.lng)) ? Number(p.lng) : null,
+            }))
+            .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng))
+        : route
+            .filter((step) => Number.isFinite(step.lat) && Number.isFinite(step.lng))
+            .map((step) => ({ lat: step.lat, lng: step.lng }));
+    const verified = route.filter((step) => step.verified).length;
+    return {
+      id: String(payload?.id || `CHAT-${Date.now()}`),
+      title: String(payload?.title || "群聊路线").trim(),
+      budgetEstimate: String(payload?.budgetEstimate || "预算待定").trim(),
+      reason: String(payload?.reason || "来自聊天的一键加入路线。").trim(),
+      route,
+      routePath,
+      validationSummary: payload?.validationSummary || { total: route.length, verified, replaced: 0, fromChat: true },
+      generatedAt: String(payload?.generatedAt || new Date().toISOString()),
+    };
+  } catch (_err) {
+    return null;
+  }
+}
+
 function readFileAsDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -2333,6 +2720,51 @@ chatThreadForm.addEventListener("submit", async (e) => {
   }
 });
 
+chatThreadMessages.addEventListener("click", async (e) => {
+  const joinBtn = e.target.closest(".chat-route-join-btn");
+  if (!joinBtn) return;
+  const token = String(joinBtn.getAttribute("data-route-token") || "").trim();
+  const plan = decodeRouteJoinPayloadToken(token);
+  if (!plan) {
+    alert("该路线卡片已失效，请让对方重新发送路线。");
+    return;
+  }
+  const originalLabel = joinBtn.textContent;
+  joinBtn.disabled = true;
+  joinBtn.textContent = "加入中...";
+  try {
+    await applyGeneratedPlan(plan, `来自${selectedChatTarget?.name || "群聊"}的一键加入`);
+    alert("已加入该路线并同步到地图。");
+  } catch (err) {
+    alert(`加入失败: ${err.message}`);
+  } finally {
+    joinBtn.disabled = false;
+    joinBtn.textContent = originalLabel || "一键加入这条路线";
+  }
+});
+
+function buildCurrentPlanChatMessage(plan) {
+  if (!plan || !Array.isArray(plan.route) || !plan.route.length) return "";
+  const routeText = plan.route
+    .slice(0, 6)
+    .map((step, idx) => `${idx + 1}. ${formatStopDateTime(step)} ${step.point}`)
+    .join("\n");
+  return appendRouteJoinPayloadToMessage(
+    `【候选路线】${plan.title}\n${routeText}\n预算：${plan.budgetEstimate || "待定"}`,
+    plan,
+  );
+}
+
+async function sendCurrentPlanToSelectedChat() {
+  if (!currentUser) throw new Error("请先登录。");
+  if (!currentPlan || !Array.isArray(currentPlan.route) || !currentPlan.route.length) {
+    throw new Error("当前没有可发送的路线，请先生成路线。");
+  }
+  const content = buildCurrentPlanChatMessage(currentPlan);
+  if (!content) throw new Error("当前路线内容为空。");
+  await sendContentToSelectedChat(content);
+}
+
 const routeDiscussionTemplate = `【路线讨论模板】
 日期：
 人数：
@@ -2360,17 +2792,8 @@ if (chatInsertTemplateBtn) {
 
 if (chatSendCurrentPlanBtn) {
   chatSendCurrentPlanBtn.addEventListener("click", async () => {
-    if (!currentUser) return alert("请先登录。");
-    if (!currentPlan || !Array.isArray(currentPlan.route) || !currentPlan.route.length) {
-      return alert("当前没有可发送的路线，请先生成路线。");
-    }
-    const routeText = currentPlan.route
-      .slice(0, 6)
-      .map((step, idx) => `${idx + 1}. ${formatStopDateTime(step)} ${step.point}`)
-      .join("\n");
-    const content = `【候选路线】${currentPlan.title}\n${routeText}\n预算：${currentPlan.budgetEstimate || "待定"}`;
     try {
-      await sendContentToSelectedChat(content);
+      await sendCurrentPlanToSelectedChat();
       alert("已发送当前路线到会话。");
     } catch (err) {
       alert(`发送失败: ${err.message}`);
@@ -3031,6 +3454,7 @@ if (exploreBackFlowBtn) {
 window.addEventListener("hashchange", () => {
   syncExploreFloatingButton();
   syncTopbarScreen();
+  updateFlowCoach();
   const screen = window.location.hash.replace("#", "") || "plan";
   if (screen === "explore") {
     maybeApplyRecommendedExplorePanel(false);
@@ -3051,6 +3475,41 @@ if (flowNextBtn) {
 if (flowResetBtn) {
   flowResetBtn.addEventListener("click", () => {
     resetFlowState();
+  });
+}
+
+if (flowCoachPrimary) {
+  flowCoachPrimary.addEventListener("click", async () => {
+    await runFlowCoachAction("primary");
+  });
+}
+
+if (flowCoachSecondary) {
+  flowCoachSecondary.addEventListener("click", async () => {
+    await runFlowCoachAction("secondary");
+  });
+}
+
+if (intentPresets) {
+  intentPresets.addEventListener("click", (e) => {
+    const btn = e.target.closest(".intent-preset-btn[data-preset]");
+    if (!btn) return;
+    const preset = btn.getAttribute("data-preset");
+    if (!preset || !INTENT_PRESETS[preset]) return;
+    applyIntentPreset(preset);
+  });
+}
+
+if (intentGenerateFastBtn) {
+  intentGenerateFastBtn.addEventListener("click", async () => {
+    try {
+      if (activeIntentPreset && INTENT_PRESETS[activeIntentPreset]) {
+        applyIntentToForm(INTENT_PRESETS[activeIntentPreset].intent);
+      }
+      await generatePlanFromIntentForm("预设一键生成", "intent_preset_generate");
+    } catch (err) {
+      alert(`预设生成失败: ${err.message}`);
+    }
   });
 }
 
@@ -3183,14 +3642,8 @@ collabList.addEventListener("click", async (e) => {
 
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
-  const data = new FormData(form);
-  const intent = Object.fromEntries(data.entries());
   try {
-    await api.logEvent("input_submit", intent);
-    const plan = await api.generatePlan(intent);
-    await applyGeneratedPlan(plan, "手动输入需求");
-    currentActivity = null;
-    await refreshEvents();
+    await generatePlanFromIntentForm("手动输入需求", "input_submit");
   } catch (err) {
     alert(`生成失败: ${err.message}`);
   }
@@ -3301,4 +3754,6 @@ maybeApplyRecommendedExplorePanel(true);
 renderFlowState();
 syncExploreFloatingButton();
 syncTopbarScreen();
+applyIntentPreset(activeIntentPreset, true);
+updateFlowCoach();
 boot();
