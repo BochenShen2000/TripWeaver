@@ -8,6 +8,11 @@ enum AppTheme {
     static let bgBottom = Color(red: 0.94, green: 0.99, blue: 0.97)
 }
 
+enum AppLayout {
+    static let horizontalPadding: CGFloat = 14
+    static let maxContentWidth: CGFloat = 620
+}
+
 struct AppGradientBackground: View {
     var body: some View {
         LinearGradient(
@@ -30,6 +35,37 @@ struct AppGradientBackground: View {
                 .offset(x: -90, y: 70)
         }
         .ignoresSafeArea()
+    }
+}
+
+struct AppPage<Content: View>: View {
+    private let alignment: HorizontalAlignment
+    private let spacing: CGFloat
+    private let content: Content
+
+    init(
+        alignment: HorizontalAlignment = .center,
+        spacing: CGFloat = 12,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.alignment = alignment
+        self.spacing = spacing
+        self.content = content()
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: alignment, spacing: spacing) {
+                content
+            }
+            .padding(.horizontal, AppLayout.horizontalPadding)
+            .padding(.vertical, 12)
+            .frame(maxWidth: AppLayout.maxContentWidth)
+            .frame(maxWidth: .infinity)
+        }
+        .scrollDismissesKeyboard(.interactively)
+        .contentMargins(.bottom, 8, for: .scrollContent)
+        .safeAreaPadding(.bottom, 4)
     }
 }
 

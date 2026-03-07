@@ -88,20 +88,17 @@ struct AuthView: View {
             ZStack {
                 AppGradientBackground()
 
-                ScrollView {
-                    VStack(spacing: 12) {
-                        titleCard
-                        serverCard
-                        accountCard
-                        authCard
-                        oauthCard
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
+                AppPage {
+                    titleCard
+                    serverCard
+                    accountCard
+                    authCard
+                    oauthCard
                 }
             }
             .navigationTitle("账号中心")
             .toolbarTitleDisplayMode(.inline)
+            .toolbarBackground(.visible, for: .navigationBar)
             .task {
                 if session.user == nil, !session.token.isEmpty {
                     await session.refreshMe()

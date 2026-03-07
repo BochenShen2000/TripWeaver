@@ -47,22 +47,19 @@ struct PlanView: View {
             ZStack {
                 AppGradientBackground()
 
-                ScrollView {
-                    VStack(spacing: 12) {
-                        quickEntryCard
-                        inputCard
-                        actionCard
+                AppPage {
+                    quickEntryCard
+                    inputCard
+                    actionCard
 
-                        if let plan {
-                            planCard(plan)
-                        }
+                    if let plan {
+                        planCard(plan)
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
                 }
             }
             .navigationTitle("路线生成")
             .toolbarTitleDisplayMode(.inline)
+            .toolbarBackground(.visible, for: .navigationBar)
         }
     }
 

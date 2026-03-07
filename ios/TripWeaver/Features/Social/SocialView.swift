@@ -65,19 +65,20 @@ struct SocialView: View {
                 AppGradientBackground()
 
                 if !session.isLoggedIn {
-                    loginPrompt
+                    AppPage {
+                        loginPrompt
+                    }
                 } else {
-                    VStack(spacing: 12) {
+                    AppPage {
                         scopePicker
                         contentCard
                         composeBar
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
                 }
             }
             .navigationTitle("聊天")
             .toolbarTitleDisplayMode(.inline)
+            .toolbarBackground(.visible, for: .navigationBar)
             .overlay(alignment: .topTrailing) {
                 if loading {
                     ProgressView()
@@ -95,17 +96,14 @@ struct SocialView: View {
     }
 
     private var loginPrompt: some View {
-        VStack(spacing: 12) {
-            TWCard {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("登录后可用")
-                        .font(.title3.weight(.semibold))
-                    Text("支持公共群聊、好友私聊和校园群聊。")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
+        TWCard {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("登录后可用")
+                    .font(.title3.weight(.semibold))
+                Text("支持公共群聊、好友私聊和校园群聊。")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             }
-            .padding()
         }
     }
 
@@ -325,7 +323,7 @@ struct SocialView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 2)
             }
-            .frame(minHeight: 260, maxHeight: 430)
+            .frame(minHeight: 220, maxHeight: 360)
             .onChange(of: currentMessages.map(\.id).joined(separator: "|")) { _, _ in
                 if let last = currentMessages.last?.id {
                     withAnimation(.easeOut(duration: 0.22)) {

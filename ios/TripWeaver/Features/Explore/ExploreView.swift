@@ -18,22 +18,19 @@ struct ExploreView: View {
             ZStack {
                 AppGradientBackground()
 
-                ScrollView {
-                    VStack(spacing: 12) {
-                        queryCard
-                        actionCard
+                AppPage {
+                    queryCard
+                    actionCard
 
-                        if !places.isEmpty {
-                            mapCard
-                            placesCard
-                        }
+                    if !places.isEmpty {
+                        mapCard
+                        placesCard
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
                 }
             }
             .navigationTitle("附近发现")
             .toolbarTitleDisplayMode(.inline)
+            .toolbarBackground(.visible, for: .navigationBar)
             .overlay(alignment: .topTrailing) {
                 if loading { ProgressView().padding(10) }
             }
