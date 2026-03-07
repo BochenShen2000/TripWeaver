@@ -34,7 +34,35 @@ struct IntentPayload: Codable {
     var country: String = ""
     var startDate: String = ""
     var endDate: String = ""
+    var startTime: String = "19:30"
     var fromCountry: String = ""
+    var seedPoints: [String]? = nil
+    var manualPlaces: [ManualPlaceInput]? = nil
+}
+
+struct ManualPlaceInput: Codable, Identifiable, Hashable {
+    var name: String
+    var placeId: String?
+    var lat: Double?
+    var lng: Double?
+    var city: String?
+    var country: String?
+    var address: String?
+    var source: String?
+    var count: Int?
+    var lastAt: String?
+    var score: Double?
+
+    var id: String {
+        let pid = placeId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !pid.isEmpty {
+            return "pid:\(pid)"
+        }
+        if let lat, let lng {
+            return "geo:\(String(format: "%.5f", lat))|\(String(format: "%.5f", lng))"
+        }
+        return "name:\(name.lowercased())|\((city ?? "").lowercased())|\((country ?? "").lowercased())"
+    }
 }
 
 struct Plan: Codable, Identifiable {
@@ -47,6 +75,14 @@ struct Plan: Codable, Identifiable {
     let validationSummary: ValidationSummary?
     let routeSummary: RouteSummary?
     let bookingLinks: BookingLinks?
+    let narrative: PlanNarrative?
+}
+
+struct PlanNarrative: Codable {
+    let hook: String?
+    let vibe: String?
+    let searchInsights: [String]?
+    let llmEnhanced: Bool?
 }
 
 struct ValidationSummary: Codable {
@@ -117,6 +153,7 @@ struct GenerateActivityResponse: Codable {
 struct DiscoveryPlace: Codable, Identifiable {
     let point: String
     let matchedName: String?
+    let placeId: String?
     let lat: Double?
     let lng: Double?
     let intro: String?
@@ -201,4 +238,12 @@ struct DiscoveryRouteEvent: Codable, Identifiable {
     let currency: String?
     let tags: [String]?
     let source: String?
+    let geo: EventGeo?
+    let route: [RouteStop]?
+    let routePath: [RoutePathPoint]?
+}
+
+struct EventGeo: Codable {
+    let lat: Double?
+    let lng: Double?
 }

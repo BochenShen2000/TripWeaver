@@ -104,67 +104,93 @@
       </section>
 
       <section class="card mobile-screen-section" data-screen="plan" id="intent-section">
-        <h2>1) 输入活动需求</h2>
+        <h2>1) 路线生成（iOS 同款）</h2>
+        <p class="meta">先填核心信息，再按需展开高级参数。</p>
         <div id="intent-presets" class="intent-presets">
-          <button type="button" class="intent-preset-btn active" data-preset="tonight_food">今晚轻松局</button>
-          <button type="button" class="intent-preset-btn" data-preset="weekend_citywalk">周末城市漫游</button>
-          <button type="button" class="intent-preset-btn" data-preset="gallery_date">展览约会局</button>
+          <button type="button" class="intent-preset-btn active" data-preset="tonight_food">今晚 city walk</button>
+          <button type="button" class="intent-preset-btn" data-preset="weekend_citywalk">周末咖啡+展</button>
+          <button type="button" class="intent-preset-btn" data-preset="gallery_date">情侣约会</button>
         </div>
         <form id="intent-form" class="form-grid">
+          <label class="full-span">
+            兴趣
+            <input name="interest" placeholder="美食 / 看展 / city walk / 桌游 / 露营 / 野餐 / 聚餐" value="city walk" required />
+          </label>
           <label>
-            你和谁去
-            <select name="companion" required>
-              <option value="朋友">朋友</option>
-              <option value="同学">同学</option>
-              <option value="情侣">情侣</option>
-              <option value="独自">独自</option>
-            </select>
+            城市
+            <input name="city" placeholder="Tokyo" value="Singapore" required />
+          </label>
+          <label>
+            国家
+            <input name="country" placeholder="Japan" value="Singapore" required />
+          </label>
+          <label class="full-span">
+            开始时间
+            <input id="intent-start-datetime" name="startDateTime" type="datetime-local" />
           </label>
 
-          <label>
-            人数
-            <input name="people" type="number" min="1" max="20" value="2" required />
-          </label>
+          <div class="full-span intent-manual-wrap">
+            <div class="intent-manual-head">
+              <strong>手动地点（可选）</strong>
+              <button id="manual-map-pin-btn" type="button" class="btn-secondary">地图标点</button>
+            </div>
+            <div class="intent-manual-input-row">
+              <input id="manual-place-input" type="text" placeholder="输入地点名，如 Shibuya Sky" />
+              <button id="manual-place-add-btn" type="button" class="btn-secondary">添加</button>
+            </div>
+            <div id="manual-place-suggestions" class="intent-manual-suggestions"></div>
+            <div id="manual-place-list" class="intent-manual-list"></div>
+          </div>
 
-          <label>
-            预算（SGD/人）
-            <select name="budget" required>
-              <option value="低预算">低预算（0-20）</option>
-              <option value="中预算" selected>中预算（20-50）</option>
-              <option value="高预算">高预算（50+）</option>
-            </select>
-          </label>
+          <details class="full-span intent-advanced">
+            <summary>高级参数</summary>
+            <div class="intent-advanced-grid">
+              <label>
+                同伴关系
+                <select name="companion">
+                  <option value="朋友" selected>朋友</option>
+                  <option value="同学">同学</option>
+                  <option value="情侣">情侣</option>
+                  <option value="独自">独自</option>
+                </select>
+              </label>
+              <label>
+                人数
+                <input name="people" type="number" min="1" max="20" value="2" />
+              </label>
+              <label>
+                预算（SGD/人）
+                <select name="budget">
+                  <option value="低预算">低预算（0-20）</option>
+                  <option value="中预算" selected>中预算（20-50）</option>
+                  <option value="高预算">高预算（50+）</option>
+                </select>
+              </label>
+              <label>
+                时间段
+                <select name="timeSlot">
+                  <option value="今天晚上" selected>今天晚上</option>
+                  <option value="周末半天">周末半天</option>
+                  <option value="周末全天">周末全天</option>
+                  <option value="多日旅行">多日旅行</option>
+                </select>
+              </label>
+              <label>
+                区域（可选）
+                <input name="area" placeholder="Tokyo, Japan" />
+              </label>
+              <label>
+                结束日期
+                <input name="endDate" type="date" />
+              </label>
+              <label>
+                出发国家
+                <input name="fromCountry" placeholder="Singapore" />
+              </label>
+            </div>
+          </details>
 
-          <label>
-            时间段
-            <select name="timeSlot" required>
-              <option value="今天晚上">今天晚上</option>
-              <option value="周末半天">周末半天</option>
-              <option value="周末全天">周末全天</option>
-            </select>
-          </label>
-
-          <label>
-            兴趣偏好
-            <select name="interest" required>
-              <option value="city walk">City Walk</option>
-              <option value="看展">看展</option>
-              <option value="咖啡">咖啡</option>
-              <option value="美食">美食</option>
-              <option value="ACG">ACG</option>
-            </select>
-          </label>
-
-          <label>
-            地理范围
-            <select name="area" required>
-              <option value="NTU附近">NTU附近</option>
-              <option value="新加坡市中心">新加坡市中心</option>
-              <option value="东海岸">东海岸</option>
-            </select>
-          </label>
-
-          <button type="submit" class="btn-primary">AI 生成活动方案</button>
+          <button type="submit" class="btn-primary full-span">AI 生成活动方案</button>
         </form>
         <div class="actions">
           <button id="intent-generate-fast-btn" type="button" class="btn-secondary">按当前预设一键生成</button>

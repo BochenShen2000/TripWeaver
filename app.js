@@ -1,6 +1,12 @@
 const form = document.getElementById("intent-form");
 const intentPresets = document.getElementById("intent-presets");
 const intentGenerateFastBtn = document.getElementById("intent-generate-fast-btn");
+const intentStartDatetimeInput = document.getElementById("intent-start-datetime");
+const manualPlaceInput = document.getElementById("manual-place-input");
+const manualPlaceAddBtn = document.getElementById("manual-place-add-btn");
+const manualMapPinBtn = document.getElementById("manual-map-pin-btn");
+const manualPlaceList = document.getElementById("manual-place-list");
+const manualPlaceSuggestions = document.getElementById("manual-place-suggestions");
 const planSection = document.getElementById("plan-section");
 const planOutput = document.getElementById("plan-output");
 const createActivityBtn = document.getElementById("create-activity");
@@ -132,6 +138,10 @@ let googleMarkers = [];
 let googlePath = null;
 let infoWindow = null;
 let googleAuthFailed = false;
+let manualPlacesForIntent = [];
+let manualMapPinMode = false;
+let manualMapClickListener = null;
+let manualSuggestTimer = null;
 
 let authToken = localStorage.getItem("auth_token") || "";
 let currentUser = null;
@@ -179,36 +189,42 @@ const SCREEN_META = {
 };
 const INTENT_PRESETS = {
   tonight_food: {
-    label: "今晚轻松局",
+    label: "今晚 city walk",
     intent: {
       companion: "朋友",
       people: "2",
       budget: "中预算",
       timeSlot: "今天晚上",
-      interest: "美食",
-      area: "新加坡市中心",
+      interest: "city walk",
+      city: "Singapore",
+      country: "Singapore",
+      area: "Singapore, Singapore",
     },
   },
   weekend_citywalk: {
-    label: "周末城市漫游",
+    label: "周末咖啡+展",
     intent: {
-      companion: "同学",
-      people: "3",
+      companion: "朋友",
+      people: "2",
       budget: "中预算",
       timeSlot: "周末半天",
-      interest: "city walk",
-      area: "新加坡市中心",
+      interest: "咖啡+看展",
+      city: "Singapore",
+      country: "Singapore",
+      area: "Singapore, Singapore",
     },
   },
   gallery_date: {
-    label: "展览约会局",
+    label: "情侣约会",
     intent: {
       companion: "情侣",
       people: "2",
       budget: "中预算",
       timeSlot: "周末半天",
-      interest: "看展",
-      area: "新加坡市中心",
+      interest: "夜景+餐厅",
+      city: "Singapore",
+      country: "Singapore",
+      area: "Singapore, Singapore",
     },
   },
 };
@@ -493,6 +509,28 @@ const api = {
       method: "POST",
       body: JSON.stringify(payload),
     });
+  },
+  getManualPlaces(params = {}) {
+    const query = new URLSearchParams();
+    if (params.q) query.set("q", params.q);
+    if (params.city) query.set("city", params.city);
+    if (params.country) query.set("country", params.country);
+    query.set("limit", String(params.limit || 12));
+    return this.request(`/api/preferences/manual-places?${query.toString()}`);
+  },
+  saveManualPlaces(payload) {
+    return this.request("/api/preferences/manual-places", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  reversePlace(params = {}) {
+    const query = new URLSearchParams();
+    query.set("lat", String(params.lat));
+    query.set("lng", String(params.lng));
+    if (params.city) query.set("city", params.city);
+    if (params.country) query.set("country", params.country);
+    return this.request(`/api/places/reverse?${query.toString()}`);
   },
   getAggregatedFeed() {
     return this.request("/api/aggregated/feed");
@@ -1099,10 +1137,90 @@ function applyIntentToForm(intent) {
     const field = form.elements.namedItem(key);
     if (field && typeof field.value !== "undefined") field.value = value;
   }
+  if (intent.startDate && intent.startTime && intentStartDatetimeInput) {
+    intentStartDatetimeInput.value = `${intent.startDate}T${intent.startTime}`;
+  }
+}
+
+function deriveAreaFromCityCountry(city, country) {
+  const c = String(city || "").trim();
+  const k = String(country || "").trim();
+  return [c, k].filter(Boolean).join(", ");
+}
+
+function normalizeManualPlace(raw = {}) {
+  const lat = Number(raw.lat);
+  const lng = Number(raw.lng);
+  return {
+    name: String(raw.name || raw.point || raw.matchedName || "").trim(),
+    placeId: String(raw.placeId || "").trim(),
+    lat: Number.isFinite(lat) ? lat : null,
+    lng: Number.isFinite(lng) ? lng : null,
+    city: String(raw.city || "").trim(),
+    country: String(raw.country || "").trim(),
+    address: String(raw.address || raw.matchedName || "").trim(),
+    source: String(raw.source || "manual_input").trim(),
+  };
+}
+
+function manualPlaceKey(place = {}) {
+  if (place.placeId) return `pid:${place.placeId.toLowerCase()}`;
+  if (Number.isFinite(place.lat) && Number.isFinite(place.lng)) return `geo:${place.lat.toFixed(5)}|${place.lng.toFixed(5)}`;
+  return `name:${String(place.name || "").trim().toLowerCase()}|${String(place.city || "").trim().toLowerCase()}|${String(place.country || "").trim().toLowerCase()}`;
+}
+
+function upsertManualPlace(place) {
+  const normalized = normalizeManualPlace(place);
+  if (!normalized.name) return false;
+  if (!normalized.city) normalized.city = String(form?.elements?.namedItem("city")?.value || "").trim();
+  if (!normalized.country) normalized.country = String(form?.elements?.namedItem("country")?.value || "").trim();
+  const key = manualPlaceKey(normalized);
+  const idx = manualPlacesForIntent.findIndex((item) => manualPlaceKey(item) === key);
+  if (idx >= 0) {
+    manualPlacesForIntent[idx] = { ...manualPlacesForIntent[idx], ...normalized };
+    return false;
+  }
+  manualPlacesForIntent.push(normalized);
+  return true;
 }
 
 function collectIntentFromForm() {
-  return Object.fromEntries(new FormData(form).entries());
+  const intent = Object.fromEntries(new FormData(form).entries());
+  const dt = String(intent.startDateTime || "").trim();
+  if (dt.includes("T")) {
+    const [datePart, timePart] = dt.split("T");
+    if (datePart) intent.startDate = datePart;
+    if (timePart) intent.startTime = timePart.slice(0, 5);
+  }
+  delete intent.startDateTime;
+
+  intent.companion = String(intent.companion || "朋友").trim() || "朋友";
+  intent.people = String(intent.people || "2").trim() || "2";
+  intent.budget = String(intent.budget || "中预算").trim() || "中预算";
+  intent.timeSlot = String(intent.timeSlot || "今天晚上").trim() || "今天晚上";
+  intent.interest = String(intent.interest || "city walk").trim() || "city walk";
+  intent.city = String(intent.city || "").trim();
+  intent.country = String(intent.country || "").trim();
+  intent.area = String(intent.area || "").trim() || deriveAreaFromCityCountry(intent.city, intent.country);
+  intent.endDate = String(intent.endDate || "").trim();
+  intent.fromCountry = String(intent.fromCountry || "").trim();
+  intent.startDate = String(intent.startDate || "").trim();
+  intent.startTime = String(intent.startTime || "").trim();
+
+  if (manualPlacesForIntent.length) {
+    intent.seedPoints = manualPlacesForIntent.map((p) => p.name).filter(Boolean);
+    intent.manualPlaces = manualPlacesForIntent.map((p) => ({
+      name: p.name,
+      placeId: p.placeId || "",
+      lat: Number.isFinite(p.lat) ? p.lat : null,
+      lng: Number.isFinite(p.lng) ? p.lng : null,
+      city: p.city || intent.city,
+      country: p.country || intent.country,
+      address: p.address || "",
+      source: p.source || "manual_input",
+    }));
+  }
+  return intent;
 }
 
 function setActiveIntentPreset(presetKey) {

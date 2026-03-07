@@ -30,6 +30,8 @@ JWT_SECRET = os.getenv("JWT_SECRET", "replace_with_long_random_secret")
 JWT_ALGO = "HS256"
 JWT_EXPIRE_DAYS = 30
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 OPEN_PUBLISH_KEY = os.getenv("OPEN_PUBLISH_KEY", "demo_platform_key")
 
 EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
@@ -107,6 +109,20 @@ def parse_datetime(value: Any) -> Optional[datetime]:
         return dt
     except Exception:
         return None
+
+
+def parse_hhmm(value: Any) -> Optional[Tuple[int, int]]:
+    raw = normalize_text(value)
+    if not raw:
+        return None
+    m = re.match(r"^(\d{1,2}):(\d{2})$", raw)
+    if not m:
+        return None
+    hour = to_int(m.group(1), -1)
+    minute = to_int(m.group(2), -1)
+    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+        return None
+    return hour, minute
 
 
 def ensure_iso_datetime(value: Any) -> Optional[str]:
@@ -532,6 +548,7 @@ def ensure_preference_memory(user: Dict[str, Any]) -> Dict[str, Any]:
     memory.setdefault("cities", {})
     memory.setdefault("categories", {})
     memory.setdefault("interests", {})
+    memory.setdefault("manualPlaces", [])
     user["preferenceMemory"] = memory
     return memory
 
@@ -612,6 +629,139 @@ def track_preference_memory(memory: Dict[str, Any], action_type: str, places: Li
         memory["interactions"] = int(memory.get("interactions") or 0) + touched
         memory["updatedAt"] = now
     return touched
+
+
+def parse_float(value: Any) -> Optional[float]:
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
+def manual_place_dedup_key(item: Dict[str, Any]) -> str:
+    place_id = normalize_text(item.get("placeId"))
+    if place_id:
+        return f"pid:{normalize_key(place_id)}"
+    lat = parse_float(item.get("lat"))
+    lng = parse_float(item.get("lng"))
+    if lat is not None and lng is not None:
+        return f"geo:{lat:.5f}|{lng:.5f}"
+    return f"name:{normalize_key(item.get('name'))}|{normalize_key(item.get('city'))}|{normalize_key(item.get('country'))}"
+
+
+def upsert_manual_place(memory: Dict[str, Any], raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not isinstance(raw, dict):
+        return None
+    name = normalize_text(raw.get("name") or raw.get("point") or raw.get("matchedName"))
+    if not name:
+        return None
+    lat = parse_float(raw.get("lat"))
+    lng = parse_float(raw.get("lng"))
+    now = now_iso()
+    source = normalize_text(raw.get("source") or "manual_input")
+
+    item = {
+        "name": name,
+        "placeId": normalize_text(raw.get("placeId")),
+        "lat": lat,
+        "lng": lng,
+        "city": normalize_text(raw.get("city")),
+        "country": normalize_text(raw.get("country")),
+        "address": normalize_text(raw.get("address")),
+        "source": source,
+        "lastAt": now,
+        "count": 1,
+        "score": 1.0,
+    }
+    key = manual_place_dedup_key(item)
+
+    bucket = memory.get("manualPlaces")
+    if not isinstance(bucket, list):
+        bucket = []
+
+    replaced = False
+    for idx, existing in enumerate(bucket):
+        if not isinstance(existing, dict):
+            continue
+        if manual_place_dedup_key(existing) != key:
+            continue
+        merged = dict(existing)
+        merged["name"] = merged.get("name") or item["name"]
+        merged["placeId"] = merged.get("placeId") or item["placeId"]
+        merged["lat"] = merged.get("lat") if merged.get("lat") is not None else item["lat"]
+        merged["lng"] = merged.get("lng") if merged.get("lng") is not None else item["lng"]
+        merged["city"] = merged.get("city") or item["city"]
+        merged["country"] = merged.get("country") or item["country"]
+        merged["address"] = merged.get("address") or item["address"]
+        merged["source"] = item["source"] or merged.get("source") or "manual_input"
+        merged["count"] = int(merged.get("count") or 0) + 1
+        merged["score"] = round(float(merged.get("score") or 0.0) + 1.0, 3)
+        merged["lastAt"] = now
+        bucket[idx] = merged
+        item = merged
+        replaced = True
+        break
+
+    if not replaced:
+        bucket.append(item)
+
+    bucket = [x for x in bucket if isinstance(x, dict)]
+    bucket.sort(
+        key=lambda x: (
+            float(x.get("score") or 0.0),
+            int(x.get("count") or 0),
+            normalize_text(x.get("lastAt")),
+        ),
+        reverse=True,
+    )
+    memory["manualPlaces"] = bucket[:200]
+    memory["updatedAt"] = now
+    return item
+
+
+def suggest_manual_places(memory: Dict[str, Any], q: str, city: str, country: str, limit: int) -> List[Dict[str, Any]]:
+    bucket = memory.get("manualPlaces")
+    if not isinstance(bucket, list):
+        return []
+    q_key = normalize_key(q)
+    city_key = normalize_key(city)
+    country_key = normalize_key(country)
+    scored: List[Tuple[float, Dict[str, Any]]] = []
+
+    for raw in bucket:
+        if not isinstance(raw, dict):
+            continue
+        name = normalize_text(raw.get("name"))
+        if not name:
+            continue
+        hay = " ".join(
+            [
+                name,
+                normalize_text(raw.get("address")),
+                normalize_text(raw.get("city")),
+                normalize_text(raw.get("country")),
+            ]
+        )
+        hay_key = normalize_key(hay)
+        if q_key and q_key not in hay_key:
+            continue
+
+        score = float(raw.get("score") or 0.0) + float(raw.get("count") or 0.0) * 0.2
+        if city_key and city_key == normalize_key(raw.get("city")):
+            score += 3.0
+        if country_key and country_key == normalize_key(raw.get("country")):
+            score += 2.0
+        if q_key and q_key and normalize_key(name).startswith(q_key):
+            score += 1.5
+        scored.append((score, raw))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    out: List[Dict[str, Any]] = []
+    for score, raw in scored[: clamp(limit, 1, 30)]:
+        item = dict(raw)
+        item["score"] = round(score, 3)
+        out.append(item)
+    return out
 
 
 # -----------------------------
@@ -729,6 +879,254 @@ def make_photo_url(photo_ref: str) -> str:
     return f"https://maps.googleapis.com/maps/api/place/photo?maxwidth=1200&photo_reference={q}&key={GOOGLE_MAPS_API_KEY}"
 
 
+def budget_alignment_score(price_level: str, budget: str) -> float:
+    level = normalize_key(price_level)
+    b = normalize_key(budget)
+    if not level or not b:
+        return 0.0
+    if level in {"unknown"}:
+        return 0.0
+    if "低" in b or "budget" in b or "cheap" in b:
+        if level in {"free", "inexpensive"}:
+            return 8.0
+        if level == "moderate":
+            return 3.0
+        return -5.0
+    if "高" in b or "luxury" in b:
+        if level in {"expensive", "very_expensive"}:
+            return 7.0
+        if level == "moderate":
+            return 3.0
+        return -2.0
+    # medium budget
+    if level == "moderate":
+        return 8.0
+    if level in {"inexpensive", "expensive"}:
+        return 3.0
+    return 0.0
+
+
+def place_heat_bonus(rating: Any, review_count: Any) -> float:
+    r = parse_float(rating) or 0.0
+    c = to_int(review_count, 0)
+    score = 0.0
+    if r >= 4.7:
+        score += 16.0
+    elif r >= 4.5:
+        score += 12.0
+    elif r >= 4.3:
+        score += 8.0
+    elif r >= 4.0:
+        score += 4.0
+    if c >= 8000:
+        score += 14.0
+    elif c >= 3000:
+        score += 10.0
+    elif c >= 1000:
+        score += 7.0
+    elif c >= 300:
+        score += 4.0
+    return score
+
+
+def interest_match_bonus(primary_type: str, interest: str) -> float:
+    p = normalize_key(primary_type)
+    i = normalize_key(interest)
+    if not p or not i:
+        return 0.0
+    if p in i:
+        return 10.0
+    mapping = {
+        "restaurant": ["美食", "聚餐", "dinner", "food"],
+        "cafe": ["咖啡", "cafe", "下午茶", "chill"],
+        "museum": ["看展", "逛展", "museum", "art"],
+        "tourist_attraction": ["city walk", "地标", "打卡", "观光"],
+        "park": ["野餐", "散步", "露营", "picnic"],
+        "bar": ["夜生活", "nightlife", "微醺"],
+        "shopping_mall": ["购物", "shopping"],
+        "campground": ["露营", "camp"],
+    }
+    for typ, keys in mapping.items():
+        if typ in p and any(k in i for k in [normalize_key(x) for x in keys]):
+            return 8.0
+    return 0.0
+
+
+def time_slot_bonus(open_now: Any, time_slot: str) -> float:
+    t = normalize_key(time_slot)
+    if not t:
+        return 0.0
+    is_open = bool(open_now) if open_now is not None else None
+    if ("今晚" in t or "晚上" in t or "night" in t) and is_open is True:
+        return 6.0
+    if ("今晚" in t or "晚上" in t or "night" in t) and is_open is False:
+        return -6.0
+    if ("周末" in t or "全天" in t) and is_open is True:
+        return 2.0
+    return 0.0
+
+
+def compute_tripwow_score(payload: Dict[str, Any], interest: str, budget: str, time_slot: str) -> float:
+    base = float((payload.get("allure") or {}).get("score") or 58)
+    rating = payload.get("rating")
+    reviews = payload.get("userRatingCount")
+    primary_type = normalize_text(payload.get("primaryType"))
+    price_level = normalize_text(payload.get("priceLevel"))
+    open_now = payload.get("openNow")
+    ticket_required = bool(((payload.get("ticketing") or {}).get("required")))
+
+    score = base
+    score += place_heat_bonus(rating, reviews)
+    score += interest_match_bonus(primary_type, interest)
+    score += budget_alignment_score(price_level, budget)
+    score += time_slot_bonus(open_now, time_slot)
+    if ticket_required:
+        score += 1.2
+    return round(score, 3)
+
+
+def search_signal_line(place: Dict[str, Any], query_hint: str = "") -> str:
+    rating = parse_float(place.get("rating"))
+    reviews = to_int(place.get("userRatingCount"), 0)
+    parts: List[str] = []
+    if rating and rating > 0:
+        parts.append(f"{rating:.1f}分")
+    if reviews > 0:
+        parts.append(f"{reviews}条评价")
+    if normalize_text(place.get("openNow")) in {"True", "False"}:
+        parts.append("营业中" if bool(place.get("openNow")) else "暂未营业")
+    if query_hint:
+        parts.append(f"匹配词：{query_hint}")
+    return " · ".join(parts)
+
+
+def polish_place_copy(place: Dict[str, Any], interest: str, query_hint: str = "") -> None:
+    name = normalize_text(place.get("point"))
+    city = normalize_text(place.get("city"))
+    country = normalize_text(place.get("country"))
+    primary_type = normalize_text(place.get("primaryType"))
+    signal = search_signal_line(place, query_hint=query_hint)
+
+    mood_map = {
+        "restaurant": "氛围和出片都稳，适合今晚直接开吃",
+        "cafe": "坐得住、聊得开，节奏轻松不赶",
+        "museum": "内容密度高，适合边逛边聊有记忆点",
+        "tourist_attraction": "打卡辨识度高，带朋友来不会踩空",
+        "park": "适合放空和社交，体感舒服",
+        "bar": "夜晚氛围在线，收尾体验更完整",
+        "shopping_mall": "吃逛一体，容错率高",
+        "campground": "自然场景加成，体验感明显",
+    }
+    mood = mood_map.get(normalize_key(primary_type), "现场体验稳定，适合作为路线重点站")
+    interest_short = normalize_text(interest) or "本次主题"
+
+    place["intro"] = f"{name}（{city}, {country}）：围绕“{interest_short}”筛出的高匹配地点，{mood}。"
+    if signal:
+        place["recommendReason"] = f"搜索信号：{signal}"
+    elif not normalize_text(place.get("recommendReason")):
+        place["recommendReason"] = "搜索信号：基于热度与口碑重排推荐"
+
+
+def build_route_narrative(route: List[Dict[str, Any]], city: str, country: str, interest: str, companion: str, budget: str) -> Dict[str, Any]:
+    top_names = [normalize_text(x.get("point")) for x in route[:3] if normalize_text(x.get("point"))]
+    hook = f"这条路线不是“到此一游”，而是把 {interest} 做成一晚就能成局的高质量体验。"
+    vibe = f"为 {companion} 设计，优先考虑真实口碑、可执行动线和预算（{budget}）。"
+    insights = [
+        f"搜索策略：{interest} + best + local favorites + {city} {country}",
+        "重排逻辑：评分/评价量/时段可用性/预算匹配/兴趣匹配",
+        f"强记忆点：{'、'.join(top_names) if top_names else '核心地标 + 高口碑门店'}",
+    ]
+    return {
+        "hook": hook,
+        "vibe": vibe,
+        "searchInsights": insights,
+        "llmEnhanced": False,
+    }
+
+
+def maybe_llm_polish_plan(
+    route: List[Dict[str, Any]],
+    city: str,
+    country: str,
+    interest: str,
+    companion: str,
+    budget: str,
+    time_slot: str,
+) -> Optional[Dict[str, Any]]:
+    if not OPENAI_API_KEY or not route:
+        return None
+    compact_route = []
+    for r in route[:10]:
+        compact_route.append(
+            {
+                "point": normalize_text(r.get("point")),
+                "primaryType": normalize_text(r.get("primaryType")),
+                "rating": r.get("rating"),
+                "userRatingCount": r.get("userRatingCount"),
+                "date": normalize_text(r.get("date")),
+                "time": normalize_text(r.get("time")),
+            }
+        )
+    system_prompt = (
+        "你是旅游产品的资深路线策展人。请把真实地点路线写得更有期待感，"
+        "但不能虚构地点与事实。输出必须是严格 JSON。"
+    )
+    user_prompt = json_dumps(
+        {
+            "task": "润色路线推荐文案，提升兴奋感和成行欲望，保持真实可信。",
+            "context": {
+                "city": city,
+                "country": country,
+                "interest": interest,
+                "companion": companion,
+                "budget": budget,
+                "timeSlot": time_slot,
+            },
+            "route": compact_route,
+            "outputSchema": {
+                "hook": "string",
+                "overallReason": "string",
+                "searchInsights": ["string"],
+                "stops": [
+                    {
+                        "point": "string",
+                        "intro": "string",
+                        "recommendReason": "string",
+                    }
+                ],
+            },
+        }
+    )
+    try:
+        resp = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": OPENAI_MODEL,
+                "temperature": 0.7,
+                "response_format": {"type": "json_object"},
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            },
+            timeout=9,
+        )
+        data = resp.json()
+        content = (((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+        if not content:
+            return None
+        parsed = json.loads(content)
+        if not isinstance(parsed, dict):
+            return None
+        return parsed
+    except Exception:
+        return None
+
+
 def known_city_country_pairs() -> List[Tuple[str, str]]:
     pairs: List[Tuple[str, str]] = []
     guides = list_docs("mook_guides", limit=300)
@@ -838,6 +1236,30 @@ def google_places_text_search(query: str, city: str, country: str, limit: int = 
         return []
     results = data.get("results") or []
     return [r for r in results if isinstance(r, dict)][: clamp(limit, 1, 20)]
+
+
+def google_places_nearby_search(lat: float, lng: float, radius: int = 350, keyword: str = "") -> List[Dict[str, Any]]:
+    if not GOOGLE_MAPS_API_KEY:
+        return []
+    params: Dict[str, Any] = {
+        "location": f"{lat},{lng}",
+        "radius": clamp(to_int(radius, 350), 80, 3000),
+        "key": GOOGLE_MAPS_API_KEY,
+        "language": "zh-CN",
+    }
+    if normalize_text(keyword):
+        params["keyword"] = normalize_text(keyword)
+    try:
+        resp = requests.get(
+            "https://maps.googleapis.com/maps/api/place/nearbysearch/json",
+            params=params,
+            timeout=12,
+        )
+        data = resp.json()
+    except Exception:
+        return []
+    results = data.get("results") or []
+    return [r for r in results if isinstance(r, dict)][:20]
 
 
 def score_place_context(place: Dict[str, Any], city: str, country: str) -> float:
@@ -1016,6 +1438,8 @@ def discover_realtime_local_places(
     category: str,
     limit: int,
     seed_points: Optional[List[str]] = None,
+    budget: str = "",
+    time_slot: str = "",
 ) -> List[Dict[str, Any]]:
     city = normalize_text(city) or "Singapore"
     country = normalize_text(country) or "Singapore"
@@ -1060,17 +1484,33 @@ def discover_realtime_local_places(
         scored.append((score, raw, reason))
     scored.sort(key=lambda x: x[0], reverse=True)
 
-    places: List[Dict[str, Any]] = []
+    candidates: List[Dict[str, Any]] = []
     used_names: set = set()
     for _score, raw, reason in scored:
         payload = build_place_payload(raw, city, country, category_norm, reason=f"匹配你的偏好：{reason}")
+        payload["searchSignals"] = {
+            "queryHint": reason,
+            "baseScore": round(_score, 3),
+        }
+        payload["tripWowScore"] = compute_tripwow_score(payload, category_norm or q, budget, time_slot)
+        polish_place_copy(payload, category_norm or q, query_hint=reason)
         name_key = normalize_key(payload.get("point"))
         if not payload.get("point") or name_key in used_names:
             continue
         used_names.add(name_key)
-        places.append(payload)
-        if len(places) >= target:
+        candidates.append(payload)
+        if len(candidates) >= target * 3:
             break
+
+    candidates.sort(
+        key=lambda x: (
+            float(x.get("tripWowScore") or 0.0),
+            float((x.get("allure") or {}).get("score") or 0),
+            float((x.get("searchSignals") or {}).get("baseScore") or 0.0),
+        ),
+        reverse=True,
+    )
+    places = candidates[:target]
 
     if len(places) < target:
         fallback = fallback_places(city, country, category_norm or q, target)
@@ -1079,6 +1519,9 @@ def discover_realtime_local_places(
             if k in used_names:
                 continue
             used_names.add(k)
+            p["tripWowScore"] = 50.0
+            p["searchSignals"] = {"queryHint": "fallback", "baseScore": 0}
+            polish_place_copy(p, category_norm or q, query_hint="fallback")
             places.append(p)
             if len(places) >= target:
                 break
@@ -1107,7 +1550,13 @@ def route_summary(route: List[Dict[str, Any]]) -> Dict[str, Any]:
     return {"distanceKm": round(total_km, 1), "durationMin": max(duration, len(route) * 20)}
 
 
-def schedule_stops(route: List[Dict[str, Any]], start_date: Optional[date], end_date: Optional[date], time_slot: str) -> List[Dict[str, Any]]:
+def schedule_stops(
+    route: List[Dict[str, Any]],
+    start_date: Optional[date],
+    end_date: Optional[date],
+    time_slot: str,
+    start_time: str = "",
+) -> List[Dict[str, Any]]:
     total = len(route)
     if total == 0:
         return route
@@ -1130,11 +1579,29 @@ def schedule_stops(route: List[Dict[str, Any]], start_date: Optional[date], end_
     if not start_date:
         start_date = date.today()
 
-    slots = ["09:30", "11:30", "13:30", "15:30", "17:30", "19:30", "21:00"]
+    preferred = parse_hhmm(start_time)
+    if preferred:
+        base_hour, base_minute = preferred
+    else:
+        raw = normalize_key(time_slot)
+        if "今晚" in raw or "晚上" in raw:
+            base_hour, base_minute = 19, 30
+        elif "半天" in raw:
+            base_hour, base_minute = 14, 0
+        else:
+            base_hour, base_minute = 10, 0
+
+    day_counter: Dict[int, int] = {}
     for idx, stop in enumerate(route):
         day_idx = min(days - 1, int((idx * days) / max(total, 1)))
         stop["date"] = (start_date + timedelta(days=day_idx)).isoformat()
-        stop["time"] = slots[idx % len(slots)]
+        seq = day_counter.get(day_idx, 0)
+        day_counter[day_idx] = seq + 1
+        total_min = base_hour * 60 + base_minute + seq * 120
+        total_min = min(total_min, 23 * 60 + 30)
+        hh = total_min // 60
+        mm = total_min % 60
+        stop["time"] = f"{hh:02d}:{mm:02d}"
     return route
 
 
@@ -1157,6 +1624,7 @@ def generate_plan(intent: Dict[str, Any], seed_points: Optional[List[str]] = Non
     people = normalize_text(intent.get("people") or "2")
     companion = normalize_text(intent.get("companion") or "朋友")
     time_slot = normalize_text(intent.get("timeSlot") or "周末半天")
+    start_time = normalize_text(intent.get("startTime") or "")
 
     start_date = parse_date(intent.get("startDate"))
     end_date = parse_date(intent.get("endDate"))
@@ -1175,6 +1643,8 @@ def generate_plan(intent: Dict[str, Any], seed_points: Optional[List[str]] = Non
         category=interest,
         limit=stop_count,
         seed_points=seed_points,
+        budget=budget,
+        time_slot=time_slot,
     )
 
     if not places:
@@ -1197,7 +1667,10 @@ def generate_plan(intent: Dict[str, Any], seed_points: Optional[List[str]] = Non
         matched_inputs = {normalize_key(r.get("input") or r.get("point")) for r in route}
         unresolved_points = [p for p in seed_pool if normalize_key(p) not in matched_inputs]
 
-    route = schedule_stops(route, start_date, end_date, time_slot)
+    route = schedule_stops(route, start_date, end_date, time_slot, start_time)
+
+    for stop in route:
+        polish_place_copy(stop, interest, query_hint=normalize_text(((stop.get("searchSignals") or {}).get("queryHint"))))
 
     summary = route_summary(route)
     verified = len([r for r in route if r.get("verified")])
@@ -1207,8 +1680,35 @@ def generate_plan(intent: Dict[str, Any], seed_points: Optional[List[str]] = Non
         if isinstance(r.get("lat"), (int, float)) and isinstance(r.get("lng"), (int, float))
     ]
 
+    narrative = build_route_narrative(route, city, country, interest, companion, budget)
+    llm = maybe_llm_polish_plan(route, city, country, interest, companion, budget, time_slot)
+    if llm:
+        stop_map: Dict[str, Dict[str, Any]] = {}
+        for s in llm.get("stops") if isinstance(llm.get("stops"), list) else []:
+            if isinstance(s, dict) and normalize_text(s.get("point")):
+                stop_map[normalize_key(s.get("point"))] = s
+        for stop in route:
+            key = normalize_key(stop.get("point"))
+            match = stop_map.get(key)
+            if not match:
+                continue
+            intro = normalize_text(match.get("intro"))
+            rec = normalize_text(match.get("recommendReason"))
+            if intro:
+                stop["intro"] = intro
+            if rec:
+                stop["recommendReason"] = rec
+        narrative["hook"] = normalize_text(llm.get("hook")) or narrative["hook"]
+        narrative["vibe"] = normalize_text(llm.get("overallReason")) or narrative["vibe"]
+        raw_insights = llm.get("searchInsights") if isinstance(llm.get("searchInsights"), list) else []
+        if raw_insights:
+            narrative["searchInsights"] = [normalize_text(x) for x in raw_insights if normalize_text(x)][:5]
+        narrative["llmEnhanced"] = True
+
     title = f"{city} {interest} 路线"
-    reason = f"基于 {companion}（约{people}人）在 {city}, {country} 的偏好生成，覆盖真实地点并附带地图与购票入口。"
+    reason = f"{narrative.get('hook', '')} {narrative.get('vibe', '')}".strip()
+    if not reason:
+        reason = f"基于 {companion}（约{people}人）在 {city}, {country} 的偏好生成，覆盖真实地点并附带地图与购票入口。"
 
     plan = {
         "id": new_id("PLAN"),
@@ -1224,6 +1724,7 @@ def generate_plan(intent: Dict[str, Any], seed_points: Optional[List[str]] = Non
             "country": country,
             "startDate": start_date.isoformat() if start_date else "",
             "endDate": end_date.isoformat() if end_date else "",
+            "startTime": start_time,
             "fromCountry": normalize_text(intent.get("fromCountry")),
         },
         "route": route,
@@ -1231,6 +1732,7 @@ def generate_plan(intent: Dict[str, Any], seed_points: Optional[List[str]] = Non
         "routeSummary": summary,
         "budgetEstimate": budget,
         "reason": reason,
+        "narrative": narrative,
         "validationSummary": {
             "total": len(route),
             "verified": verified,
@@ -1325,6 +1827,8 @@ def create_activity(plan: Dict[str, Any], user: Optional[Dict[str, Any]] = None)
         "rsvps": [{"userId": user["id"], "status": "going", "at": now_iso(), "user": creator_public}] if user else [],
         "createdAt": now_iso(),
         "geo": geo,
+        "route": route,
+        "routePath": plan.get("routePath") if isinstance(plan.get("routePath"), list) else [],
     }
     upsert_doc("local_events", local_event, owner_id=owner_id)
     activity["localEventId"] = local_event["id"]
@@ -2221,13 +2725,56 @@ def generate_image_route(payload: Dict[str, Any], _user: Optional[Dict[str, Any]
 
 
 @app.post("/api/generate-plan")
-def api_generate_plan(payload: Dict[str, Any]) -> Dict[str, Any]:
+def api_generate_plan(payload: Dict[str, Any], request: Request) -> Dict[str, Any]:
     required = ["companion", "people", "budget", "timeSlot", "interest", "area"]
     if not all(normalize_text(payload.get(k)) for k in required):
         # keep compatibility: if city/country present, allow empty area
         if not (normalize_text(payload.get("city")) and normalize_text(payload.get("country"))):
             raise HTTPException(status_code=400, detail="Invalid intent payload")
-    return generate_plan(payload)
+
+    seed_points_raw = payload.get("seedPoints") if isinstance(payload.get("seedPoints"), list) else []
+    manual_places = payload.get("manualPlaces") if isinstance(payload.get("manualPlaces"), list) else []
+    seed_points: List[str] = []
+    for value in seed_points_raw:
+        text = normalize_text(value)
+        if text and text not in seed_points:
+            seed_points.append(text)
+    for item in manual_places:
+        if not isinstance(item, dict):
+            continue
+        text = normalize_text(item.get("name") or item.get("point") or item.get("matchedName"))
+        if text and text not in seed_points:
+            seed_points.append(text)
+
+    plan = generate_plan(payload, seed_points=seed_points if seed_points else None)
+
+    user = optional_auth_user(request)
+    if user:
+        memory = ensure_preference_memory(user)
+        for item in manual_places[:40]:
+            if isinstance(item, dict):
+                if not normalize_text(item.get("city")):
+                    item["city"] = normalize_text(payload.get("city"))
+                if not normalize_text(item.get("country")):
+                    item["country"] = normalize_text(payload.get("country"))
+                upsert_manual_place(memory, item)
+        if seed_points and not manual_places:
+            for name in seed_points[:20]:
+                upsert_manual_place(
+                    memory,
+                    {
+                        "name": name,
+                        "city": normalize_text(payload.get("city")),
+                        "country": normalize_text(payload.get("country")),
+                        "source": "manual_seed",
+                    },
+                )
+        route_places = plan.get("route") if isinstance(plan.get("route"), list) else []
+        track_preference_memory(memory, "plan_view", route_places)
+        user["preferenceMemory"] = memory
+        update_user(user)
+
+    return plan
 
 
 @app.post("/api/create-activity")
@@ -2392,6 +2939,90 @@ def rsvp_local_event(event_id: str, payload: Dict[str, Any], user: Dict[str, Any
     event["rsvps"] = rsvps
     replace_doc("local_events", event_id, event)
     return event
+
+
+def can_access_local_event_chat(event: Dict[str, Any], user_id: str) -> bool:
+    creator = event.get("creator") if isinstance(event.get("creator"), dict) else {}
+    if normalize_text(creator.get("id")) == user_id:
+        return True
+    rsvps = event.get("rsvps") if isinstance(event.get("rsvps"), list) else []
+    for r in rsvps:
+        if not isinstance(r, dict):
+            continue
+        if normalize_text(r.get("userId")) != user_id:
+            continue
+        status = normalize_key(r.get("status") or "going")
+        if status in {"going", "interested"}:
+            return True
+    return False
+
+
+@app.get("/api/local/events/joined")
+def get_joined_local_events(user: Dict[str, Any] = Depends(auth_user), limit: int = 20) -> List[Dict[str, Any]]:
+    safe_limit = clamp(limit, 1, 80)
+    events = list_docs("local_events", limit=1200)
+    now_dt = datetime.now(timezone.utc)
+    collected: List[Tuple[datetime, Dict[str, Any]]] = []
+
+    for item in events:
+        if not can_access_local_event_chat(item, user["id"]):
+            continue
+        start_dt = parse_datetime(item.get("startAt")) or parse_datetime(item.get("createdAt")) or now_dt
+        if start_dt < now_dt - timedelta(days=7):
+            continue
+        collected.append((start_dt, item))
+
+    collected.sort(key=lambda x: x[0])
+    return [event for _, event in collected[:safe_limit]]
+
+
+@app.get("/api/local/events/{event_id}")
+def get_local_event_detail(event_id: str, request: Request) -> Dict[str, Any]:
+    event = get_doc("local_events", event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found.")
+    user = optional_auth_user(request)
+    if user and can_access_local_event_chat(event, user["id"]):
+        return event
+    # public-safe detail for not-joined users
+    safe = dict(event)
+    safe.pop("messages", None)
+    return safe
+
+
+@app.get("/api/local/events/{event_id}/messages")
+def get_local_event_messages(event_id: str, user: Dict[str, Any] = Depends(auth_user)) -> List[Dict[str, Any]]:
+    event = get_doc("local_events", event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found.")
+    if not can_access_local_event_chat(event, user["id"]):
+        raise HTTPException(status_code=403, detail="Not joined this event.")
+    messages = event.get("messages") if isinstance(event.get("messages"), list) else []
+    return messages[-300:]
+
+
+@app.post("/api/local/events/{event_id}/messages")
+def post_local_event_message(event_id: str, payload: Dict[str, Any], user: Dict[str, Any] = Depends(auth_user)) -> Dict[str, Any]:
+    event = get_doc("local_events", event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found.")
+    if not can_access_local_event_chat(event, user["id"]):
+        raise HTTPException(status_code=403, detail="Not joined this event.")
+    content = normalize_text(payload.get("content"))
+    if not content:
+        raise HTTPException(status_code=400, detail="Message content is required.")
+    message = {
+        "id": new_id("EVM"),
+        "content": content[:2000],
+        "user": to_public_user(user),
+        "geo": parse_geo(payload.get("geo")),
+        "createdAt": now_iso(),
+    }
+    msgs = event.get("messages") if isinstance(event.get("messages"), list) else []
+    msgs.append(message)
+    event["messages"] = msgs[-600:]
+    replace_doc("local_events", event_id, event)
+    return message
 
 
 @app.get("/api/inspirations")
@@ -2626,6 +3257,105 @@ def discovery_places(
         limit=limit,
     )
     return places
+
+
+@app.get("/api/places/reverse")
+def reverse_place(
+    lat: float,
+    lng: float,
+    city: str = "",
+    country: str = "",
+) -> Dict[str, Any]:
+    if lat < -90 or lat > 90 or lng < -180 or lng > 180:
+        raise HTTPException(status_code=400, detail="Invalid coordinates.")
+    city_text = normalize_text(city)
+    country_text = normalize_text(country)
+    if not city_text or not country_text:
+        inferred_city, inferred_country = infer_city_country(f"{city_text}, {country_text}".strip(", "))
+        city_text = city_text or inferred_city
+        country_text = country_text or inferred_country
+
+    nearby = google_places_nearby_search(lat, lng, radius=350)
+    if nearby:
+        best = sorted(
+            nearby,
+            key=lambda p: haversine_km(
+                lat,
+                lng,
+                float((p.get("geometry") or {}).get("location", {}).get("lat") or lat),
+                float((p.get("geometry") or {}).get("location", {}).get("lng") or lng),
+            ),
+        )[0]
+        payload = build_place_payload(best, city_text or "Unknown", country_text or "Unknown", category="", reason="地图标点就近匹配")
+        if payload.get("lat") is None:
+            payload["lat"] = lat
+        if payload.get("lng") is None:
+            payload["lng"] = lng
+        return payload
+
+    lat_fmt = f"{lat:.5f}"
+    lng_fmt = f"{lng:.5f}"
+    name = f"地图标点 {lat_fmt}, {lng_fmt}"
+    return {
+        "point": name,
+        "matchedName": name,
+        "placeId": "",
+        "lat": lat,
+        "lng": lng,
+        "verified": False,
+        "source": "Map Pin",
+        "intro": "基于地图手动标点添加，建议后续确认具体门店。",
+        "primaryType": "manual_point",
+        "rating": None,
+        "userRatingCount": None,
+        "city": city_text,
+        "country": country_text,
+        "googleMapsUri": f"https://www.google.com/maps?q={lat_fmt},{lng_fmt}",
+        "recommendReason": "手动地图标点",
+    }
+
+
+@app.get("/api/preferences/manual-places")
+def get_manual_places(
+    q: str = "",
+    city: str = "",
+    country: str = "",
+    limit: int = 12,
+    user: Dict[str, Any] = Depends(auth_user),
+) -> List[Dict[str, Any]]:
+    memory = ensure_preference_memory(user)
+    return suggest_manual_places(memory, q, city, country, clamp(limit, 1, 30))
+
+
+@app.post("/api/preferences/manual-places")
+def save_manual_places(payload: Dict[str, Any], user: Dict[str, Any] = Depends(auth_user)) -> Dict[str, Any]:
+    memory = ensure_preference_memory(user)
+    items = payload.get("places") if isinstance(payload.get("places"), list) else [payload]
+    saved: List[Dict[str, Any]] = []
+
+    for raw in items[:40]:
+        item: Dict[str, Any]
+        if isinstance(raw, dict):
+            item = dict(raw)
+        else:
+            name = normalize_text(raw)
+            if not name:
+                continue
+            item = {"name": name}
+        item.setdefault("city", normalize_text(payload.get("city")))
+        item.setdefault("country", normalize_text(payload.get("country")))
+        merged = upsert_manual_place(memory, item)
+        if merged:
+            saved.append(merged)
+
+    user["preferenceMemory"] = memory
+    update_user(user)
+    return {
+        "ok": True,
+        "saved": saved,
+        "total": len(memory.get("manualPlaces") if isinstance(memory.get("manualPlaces"), list) else []),
+        "updatedAt": memory.get("updatedAt"),
+    }
 
 
 @app.post("/api/preferences/track")
