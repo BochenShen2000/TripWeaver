@@ -6,6 +6,7 @@ import random
 import re
 import sqlite3
 import smtplib
+import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from email.message import EmailMessage
@@ -28,6 +29,27 @@ DATA_DIR = ROOT / "data"
 DATA_DIR.mkdir(exist_ok=True)
 DB_PATH = DATA_DIR / "app.db"
 
+
+def env_float(name: str, default: float) -> float:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except Exception:
+        return default
+
+
+def env_int(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except Exception:
+        return default
+
+
 JWT_SECRET = os.getenv("JWT_SECRET", "replace_with_long_random_secret")
 JWT_ALGO = "HS256"
 JWT_EXPIRE_DAYS = 30
@@ -44,6 +66,11 @@ SMTP_USE_TLS_RAW = os.getenv("SMTP_USE_TLS", "true").strip()
 SMTP_USE_SSL_RAW = os.getenv("SMTP_USE_SSL", "false").strip()
 AUTH_CODE_DEBUG_RAW = os.getenv("AUTH_CODE_DEBUG", "true").strip()
 AUTH_CODE_SENDER_NAME = os.getenv("AUTH_CODE_SENDER_NAME", "TripWeaver").strip() or "TripWeaver"
+PLACES_HTTP_TIMEOUT_SEC = max(1.5, min(12.0, env_float("PLACES_HTTP_TIMEOUT_SEC", 4.0)))
+OPENAI_HTTP_TIMEOUT_SEC = max(1.5, min(12.0, env_float("OPENAI_HTTP_TIMEOUT_SEC", 4.0)))
+DISCOVERY_BUDGET_SEC = max(2.0, min(20.0, env_float("DISCOVERY_BUDGET_SEC", 7.0)))
+DISCOVERY_MAX_SEED_QUERIES = max(2, min(20, env_int("DISCOVERY_MAX_SEED_QUERIES", 6)))
+PLACES_CACHE_TTL_SEC = max(30, min(3600, env_int("PLACES_CACHE_TTL_SEC", 300)))
 
 EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 PHONE_RE = re.compile(r"^\+?[0-9][0-9\-\s]{5,18}$")
@@ -65,6 +92,7 @@ COLLECTION_FILES = {
     "mook_guides": DATA_DIR / "mook_guides.json",
 }
 USERS_JSON = DATA_DIR / "users.json"
+PLACES_SEARCH_CACHE: Dict[str, Dict[str, Any]] = {}
 
 
 def now_iso() -> str:
@@ -1176,7 +1204,7 @@ def maybe_llm_polish_plan(
                     {"role": "user", "content": user_prompt},
                 ],
             },
-            timeout=9,
+            timeout=OPENAI_HTTP_TIMEOUT_SEC,
         )
         data = resp.json()
         content = (((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
@@ -1277,9 +1305,17 @@ def normalize_interest_category(interest: str) -> str:
     return text
 
 
-def google_places_text_search(query: str, city: str, country: str, limit: int = 8) -> List[Dict[str, Any]]:
+def google_places_text_search(query: str, city: str, country: str, limit: int = 8, timeout_sec: Optional[float] = None) -> List[Dict[str, Any]]:
     if not GOOGLE_MAPS_API_KEY:
         return []
+    cache_key = f"{normalize_key(query)}|{normalize_key(city)}|{normalize_key(country)}|{clamp(limit, 1, 20)}"
+    now_ts = time.time()
+    cached = PLACES_SEARCH_CACHE.get(cache_key)
+    if cached and now_ts - float(cached.get("at") or 0) <= PLACES_CACHE_TTL_SEC:
+        hit = cached.get("results")
+        if isinstance(hit, list):
+            return [dict(x) for x in hit if isinstance(x, dict)]
+
     region = normalize_country_to_region(country)
     params = {
         "query": query,
@@ -1292,13 +1328,17 @@ def google_places_text_search(query: str, city: str, country: str, limit: int = 
         resp = requests.get(
             "https://maps.googleapis.com/maps/api/place/textsearch/json",
             params=params,
-            timeout=12,
+            timeout=max(1.0, float(timeout_sec or PLACES_HTTP_TIMEOUT_SEC)),
         )
         data = resp.json()
     except Exception:
+        if cached and isinstance(cached.get("results"), list):
+            return [dict(x) for x in cached.get("results") if isinstance(x, dict)]
         return []
     results = data.get("results") or []
-    return [r for r in results if isinstance(r, dict)][: clamp(limit, 1, 20)]
+    trimmed = [r for r in results if isinstance(r, dict)][: clamp(limit, 1, 20)]
+    PLACES_SEARCH_CACHE[cache_key] = {"at": now_ts, "results": trimmed}
+    return trimmed
 
 
 def google_places_nearby_search(lat: float, lng: float, radius: int = 350, keyword: str = "") -> List[Dict[str, Any]]:
@@ -1511,7 +1551,7 @@ def discover_realtime_local_places(
 
     queries: List[Tuple[str, str]] = []
     if seed_points:
-        for p in seed_points[:20]:
+        for p in seed_points[:DISCOVERY_MAX_SEED_QUERIES]:
             p_text = normalize_text(p)
             if p_text:
                 queries.append((f"{p_text} {city} {country}", p_text))
@@ -1523,11 +1563,28 @@ def discover_realtime_local_places(
             queries.append((f"best {category_norm} in {city} {country}", category_norm))
         queries.append((f"popular places in {city} {country}", "popular"))
 
-    raw_candidates: List[Tuple[Dict[str, Any], str]] = []
+    seen_queries: set = set()
+    unique_queries: List[Tuple[str, str]] = []
     for query, reason in queries:
-        for item in google_places_text_search(query, city, country, limit=8):
+        qk = normalize_key(query)
+        if not qk or qk in seen_queries:
+            continue
+        seen_queries.add(qk)
+        unique_queries.append((query, reason))
+
+    raw_candidates: List[Tuple[Dict[str, Any], str]] = []
+    started = time.time()
+    cap = max(target * 3, 18)
+    for query, reason in unique_queries:
+        elapsed = time.time() - started
+        if elapsed >= DISCOVERY_BUDGET_SEC:
+            break
+        remaining = DISCOVERY_BUDGET_SEC - elapsed
+        timeout_now = max(1.0, min(PLACES_HTTP_TIMEOUT_SEC, remaining))
+
+        for item in google_places_text_search(query, city, country, limit=8, timeout_sec=timeout_now):
             raw_candidates.append((item, reason))
-        if len(raw_candidates) >= 60:
+        if len(raw_candidates) >= cap:
             break
 
     if not raw_candidates:
