@@ -182,10 +182,10 @@ const EXPLORE_PANEL_LABELS = {
   campus: "校园",
 };
 const SCREEN_META = {
-  plan: { title: "首页", subtitle: "主流程" },
-  social: { title: "社交", subtitle: "好友与群聊" },
+  plan: { title: "路线", subtitle: "AI 活动发起器" },
   explore: { title: "发现", subtitle: "活动与灵感" },
-  travel: { title: "旅行", subtitle: "跨国与协同" },
+  social: { title: "聊天", subtitle: "好友与群聊" },
+  account: { title: "账号", subtitle: "账户与安全" },
 };
 const INTENT_PRESETS = {
   tonight_food: {
@@ -583,6 +583,11 @@ function setAuth(token, user) {
   }
 
   renderAuthState();
+  if (!currentUser) {
+    renderManualSuggestions([]);
+  } else {
+    loadManualPlaceSuggestions(manualPlaceInput?.value || "").catch(() => {});
+  }
 }
 
 function renderAuthState() {
@@ -1223,6 +1228,176 @@ function collectIntentFromForm() {
   return intent;
 }
 
+function renderManualPlaces() {
+  if (!manualPlaceList) return;
+  if (!manualPlacesForIntent.length) {
+    manualPlaceList.innerHTML = `<span class="meta">还没有手动地点，可输入或点地图添加。</span>`;
+    return;
+  }
+  manualPlaceList.innerHTML = manualPlacesForIntent
+    .map((place, index) => {
+      const location = [place.city, place.country].filter(Boolean).join(", ");
+      const label = location ? `${place.name} · ${location}` : place.name;
+      return `<button type="button" class="intent-manual-chip remove" data-manual-remove="${index}" title="移除">${escapeHtml(label)} ×</button>`;
+    })
+    .join("");
+}
+
+function renderManualSuggestions(places = []) {
+  if (!manualPlaceSuggestions) return;
+  if (!places.length) {
+    manualPlaceSuggestions.innerHTML = "";
+    return;
+  }
+  manualPlaceSuggestions.innerHTML = places
+    .map((place, index) => {
+      const location = [place.city, place.country].filter(Boolean).join(", ");
+      const label = location ? `${place.name} · ${location}` : place.name;
+      return `<button type="button" class="intent-manual-chip" data-manual-suggest="${index}">${escapeHtml(label)}</button>`;
+    })
+    .join("");
+}
+
+async function saveManualPlacesForAccount(places = []) {
+  if (!currentUser || !places.length) return;
+  const city = String(form?.elements?.namedItem("city")?.value || "").trim();
+  const country = String(form?.elements?.namedItem("country")?.value || "").trim();
+  try {
+    await api.saveManualPlaces({
+      city,
+      country,
+      places,
+    });
+  } catch (_err) {
+    // Ignore save failures and keep local editing experience.
+  }
+}
+
+async function loadManualPlaceSuggestions(q = "") {
+  if (!currentUser) {
+    renderManualSuggestions([]);
+    return;
+  }
+  const city = String(form?.elements?.namedItem("city")?.value || "").trim();
+  const country = String(form?.elements?.namedItem("country")?.value || "").trim();
+  try {
+    const result = await api.getManualPlaces({
+      q: String(q || "").trim(),
+      city,
+      country,
+      limit: 12,
+    });
+    const dedupKeys = new Set(manualPlacesForIntent.map((item) => manualPlaceKey(item)));
+    const suggestions = Array.isArray(result)
+      ? result
+          .map((item) => normalizeManualPlace(item))
+          .filter((item) => item.name && !dedupKeys.has(manualPlaceKey(item)))
+          .slice(0, 8)
+      : [];
+    renderManualSuggestions(suggestions);
+    if (manualPlaceSuggestions) {
+      manualPlaceSuggestions.dataset.suggestPayload = JSON.stringify(suggestions);
+    }
+  } catch (_err) {
+    renderManualSuggestions([]);
+  }
+}
+
+function parseManualSuggestionsFromDataset() {
+  if (!manualPlaceSuggestions) return [];
+  try {
+    const parsed = JSON.parse(manualPlaceSuggestions.dataset.suggestPayload || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_err) {
+    return [];
+  }
+}
+
+async function addManualPlaceFromTextInput() {
+  const raw = String(manualPlaceInput?.value || "").trim();
+  if (!raw) return;
+  const added = upsertManualPlace({
+    name: raw,
+    city: String(form?.elements?.namedItem("city")?.value || "").trim(),
+    country: String(form?.elements?.namedItem("country")?.value || "").trim(),
+    source: "manual_text",
+  });
+  renderManualPlaces();
+  manualPlaceInput.value = "";
+  if (added) {
+    await saveManualPlacesForAccount([manualPlacesForIntent[manualPlacesForIntent.length - 1]]);
+    showToast("已添加手动地点");
+  }
+  await loadManualPlaceSuggestions("");
+}
+
+async function resolveAndAddManualMapPoint(lat, lng) {
+  const city = String(form?.elements?.namedItem("city")?.value || "").trim();
+  const country = String(form?.elements?.namedItem("country")?.value || "").trim();
+  let place = null;
+  try {
+    const result = await api.reversePlace({ lat, lng, city, country });
+    place = normalizeManualPlace({
+      name: result.point || result.matchedName || `地图标点 ${lat.toFixed(4)}, ${lng.toFixed(4)}`,
+      placeId: result.placeId || "",
+      lat: result.lat,
+      lng: result.lng,
+      city: result.city || city,
+      country: result.country || country,
+      address: result.matchedName || "",
+      source: "map_pin",
+    });
+  } catch (_err) {
+    place = normalizeManualPlace({
+      name: `地图标点 ${lat.toFixed(4)}, ${lng.toFixed(4)}`,
+      lat,
+      lng,
+      city,
+      country,
+      source: "map_pin",
+    });
+  }
+  const added = upsertManualPlace(place);
+  renderManualPlaces();
+  if (added) {
+    await saveManualPlacesForAccount([place]);
+  }
+  showToast(`已添加：${place.name}`);
+}
+
+async function toggleManualMapPinMode() {
+  if (!manualMapPinBtn) return;
+  if (!mapConfig.enabled || !mapConfig.apiKey) {
+    showToast("Google Maps 未配置，无法地图标点。", "error");
+    return;
+  }
+  try {
+    await ensureMapReady();
+  } catch (err) {
+    showToast(`地图不可用：${err.message}`, "error");
+    return;
+  }
+
+  manualMapPinMode = !manualMapPinMode;
+  manualMapPinBtn.classList.toggle("active", manualMapPinMode);
+  manualMapPinBtn.textContent = manualMapPinMode ? "标点中（点地图）" : "地图标点";
+
+  if (manualMapClickListener) {
+    manualMapClickListener.remove();
+    manualMapClickListener = null;
+  }
+  if (!manualMapPinMode || !googleMap) return;
+
+  manualMapClickListener = googleMap.addListener("click", async (event) => {
+    if (!manualMapPinMode) return;
+    const lat = Number(event?.latLng?.lat?.());
+    const lng = Number(event?.latLng?.lng?.());
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    await resolveAndAddManualMapPoint(lat, lng);
+  });
+  showToast("地图标点已开启，点击地图即可添加地点。");
+}
+
 function setActiveIntentPreset(presetKey) {
   if (!INTENT_PRESETS[presetKey]) return;
   activeIntentPreset = presetKey;
@@ -1267,7 +1442,9 @@ function buildIntentFromSeed(seed = {}) {
     budget: "中预算",
     timeSlot: "周末半天",
     interest: pickInterestFromTags([tagPool]),
-    area: areaFromCity(seed.city || seed.toCity || ""),
+    city: seed.city || seed.toCity || "Singapore",
+    country: seed.country || seed.toCountry || "Singapore",
+    area: areaFromCity(seed.city || seed.toCity || "Singapore", seed.country || seed.toCountry || "Singapore"),
   };
 }
 
@@ -1994,11 +2171,11 @@ function pickInterestFromTags(tags = []) {
   return "city walk";
 }
 
-function areaFromCity(city = "") {
-  const lower = String(city).toLowerCase();
-  if (lower.includes("ntu")) return "NTU附近";
-  if (lower.includes("east")) return "东海岸";
-  return "新加坡市中心";
+function areaFromCity(city = "", country = "") {
+  const c = String(city || "").trim();
+  const k = String(country || "").trim();
+  if (c || k) return [c, k || "Singapore"].filter(Boolean).join(", ");
+  return "Singapore, Singapore";
 }
 
 function renderInspirations(posts) {
@@ -2297,6 +2474,18 @@ function renderPlan(plan) {
   const routeSummary = plan.routeSummary
     ? `整段路径：约 ${plan.routeSummary.distanceKm || "-"} km / ${plan.routeSummary.durationMin || "-"} 分钟`
     : "整段路径：暂无官方路线时长";
+  const narrative = plan.narrative || {};
+  const narrativeInsights = Array.isArray(narrative.searchInsights) ? narrative.searchInsights.slice(0, 3) : [];
+  const narrativeHtml =
+    narrative.hook || narrative.vibe || narrativeInsights.length
+      ? `
+      <article class="travel-item">
+        ${narrative.hook ? `<div class="travel-head"><strong>${escapeHtml(narrative.hook)}</strong><span>${narrative.llmEnhanced ? "LLM增强" : "推荐增强"}</span></div>` : ""}
+        ${narrative.vibe ? `<div class="travel-meta">${escapeHtml(narrative.vibe)}</div>` : ""}
+        ${narrativeInsights.length ? `<div class="travel-meta">${narrativeInsights.map((line) => `• ${escapeHtml(line)}`).join("<br/>")}</div>` : ""}
+      </article>
+    `
+      : "";
   const routeHtml = plan.route
     .map((step) => {
       const mapsUrl = createGoogleMapsSearchUrl(step.matchedName || step.point);
@@ -2364,6 +2553,7 @@ function renderPlan(plan) {
     <p class="meta">预算估计：${plan.budgetEstimate}</p>
     <p class="meta">地点校验：${validation} | 来源：${realtimeTag}${multiDayTag}</p>
     <p class="meta">${routeSummary}</p>
+    ${narrativeHtml}
     ${masterBooking}
     <div class="travel-list">${routeHtml}</div>
     <p class="why">${plan.reason}</p>
@@ -3812,6 +4002,73 @@ if (intentPresets) {
   });
 }
 
+if (manualPlaceInput) {
+  manualPlaceInput.addEventListener("keydown", async (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      await addManualPlaceFromTextInput();
+      return;
+    }
+    if (manualSuggestTimer) clearTimeout(manualSuggestTimer);
+    manualSuggestTimer = setTimeout(() => {
+      loadManualPlaceSuggestions(manualPlaceInput.value).catch(() => {});
+    }, 180);
+  });
+  manualPlaceInput.addEventListener("input", () => {
+    if (manualSuggestTimer) clearTimeout(manualSuggestTimer);
+    manualSuggestTimer = setTimeout(() => {
+      loadManualPlaceSuggestions(manualPlaceInput.value).catch(() => {});
+    }, 180);
+  });
+}
+
+if (manualPlaceAddBtn) {
+  manualPlaceAddBtn.addEventListener("click", async () => {
+    await addManualPlaceFromTextInput();
+  });
+}
+
+if (manualMapPinBtn) {
+  manualMapPinBtn.addEventListener("click", async () => {
+    await toggleManualMapPinMode();
+  });
+}
+
+if (manualPlaceList) {
+  manualPlaceList.addEventListener("click", async (e) => {
+    const btn = e.target.closest("[data-manual-remove]");
+    if (!btn) return;
+    const idx = Number(btn.getAttribute("data-manual-remove"));
+    if (!Number.isInteger(idx) || idx < 0 || idx >= manualPlacesForIntent.length) return;
+    manualPlacesForIntent.splice(idx, 1);
+    renderManualPlaces();
+    await loadManualPlaceSuggestions(manualPlaceInput?.value || "");
+  });
+}
+
+if (manualPlaceSuggestions) {
+  manualPlaceSuggestions.addEventListener("click", async (e) => {
+    const btn = e.target.closest("[data-manual-suggest]");
+    if (!btn) return;
+    const idx = Number(btn.getAttribute("data-manual-suggest"));
+    const suggestions = parseManualSuggestionsFromDataset();
+    const pick = suggestions[idx];
+    if (!pick) return;
+    const added = upsertManualPlace(pick);
+    renderManualPlaces();
+    if (added) {
+      await saveManualPlacesForAccount([pick]);
+    }
+    await loadManualPlaceSuggestions("");
+  });
+}
+
+if (intentStartDatetimeInput && !intentStartDatetimeInput.value) {
+  const now = new Date();
+  now.setHours(now.getHours() + 2);
+  intentStartDatetimeInput.value = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+}
+
 if (intentGenerateFastBtn) {
   intentGenerateFastBtn.addEventListener("click", async () => {
     try {
@@ -4036,6 +4293,7 @@ async function restoreSession() {
     await loadAggregatedFeed().catch(() => {});
     await loadCollabTrips();
     await loadPersonalizedRecommendations({ force: true });
+    await loadManualPlaceSuggestions(manualPlaceInput?.value || "");
     connectChatSocket();
   } catch (_err) {
     setAuth("", null);
@@ -4060,6 +4318,7 @@ async function boot() {
   await loadCollabTrips();
   await refreshEvents();
   await renderDefaultGlobalMap();
+  renderManualPlaces();
   renderFlowState();
 }
 
