@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		065F73E8C87A9447EDB4F234 /* AuthView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58E66CB4907167141BD24C67 /* AuthView.swift */; };
+		73314AB6284D2F56DE8E7ABF /* SocialView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53D69FD5F22377B86108D758 /* SocialView.swift */; };
 		7E4339ABD3BF916100F31C5D /* SessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFF4EE21314564F41B10A0D3 /* SessionStore.swift */; };
 		85B5A65AA56D93F52DC2A520 /* ExploreView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BED8BBBF737291FE0CC61817 /* ExploreView.swift */; };
 		8E96EBF7E40606948E2D82E0 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 8409E94EE8592ECBA0C115CF /* Assets.xcassets */; };
@@ -15,13 +16,16 @@
 		AF16086298D54FA2C42418C6 /* TripWeaveriOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89C2E20B1032651E43C9D498 /* TripWeaveriOSApp.swift */; };
 		BC59811AA11A075814BC76DB /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A42338472D02002276991E2 /* Models.swift */; };
 		D11FFECEFFEBBA99EFFB01F0 /* PlaceMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78B211F514FD8B77BD7EC6F9 /* PlaceMapView.swift */; };
+		EEB89FDF4D6FF9A58D210A73 /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 715DCD6BEFEE4EC862BC512D /* AppTheme.swift */; };
 		F4EABA749342A5F090195EC5 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBA07FCB1319FFB215DC68EC /* APIClient.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		1DB49E14D2DA3EFD57C385F9 /* TripWeaveriOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = TripWeaveriOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4A42338472D02002276991E2 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		53D69FD5F22377B86108D758 /* SocialView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocialView.swift; sourceTree = "<group>"; };
 		58E66CB4907167141BD24C67 /* AuthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthView.swift; sourceTree = "<group>"; };
+		715DCD6BEFEE4EC862BC512D /* AppTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTheme.swift; sourceTree = "<group>"; };
 		78B211F514FD8B77BD7EC6F9 /* PlaceMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceMapView.swift; sourceTree = "<group>"; };
 		8409E94EE8592ECBA0C115CF /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		89C2E20B1032651E43C9D498 /* TripWeaveriOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TripWeaveriOSApp.swift; sourceTree = "<group>"; };
@@ -58,6 +62,7 @@
 				AA9F909345F2E8E763A49C41 /* Auth */,
 				D9E0FA4CFACD0F9484FF9CF8 /* Explore */,
 				DA07958F8C16ABE77DE2701F /* Plan */,
+				E03C83AD1D4F4EA5175466AA /* Social */,
 			);
 			path = Features;
 			sourceTree = "<group>";
@@ -74,6 +79,7 @@
 			isa = PBXGroup;
 			children = (
 				FBA07FCB1319FFB215DC68EC /* APIClient.swift */,
+				715DCD6BEFEE4EC862BC512D /* AppTheme.swift */,
 				CFF4EE21314564F41B10A0D3 /* SessionStore.swift */,
 			);
 			path = Core;
@@ -126,6 +132,14 @@
 				FE1932E2F53E45D8C6869116 /* PlanView.swift */,
 			);
 			path = Plan;
+			sourceTree = "<group>";
+		};
+		E03C83AD1D4F4EA5175466AA /* Social */ = {
+			isa = PBXGroup;
+			children = (
+				53D69FD5F22377B86108D758 /* SocialView.swift */,
+			);
+			path = Social;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -196,12 +210,14 @@
 			buildActionMask = 2147483647;
 			files = (
 				F4EABA749342A5F090195EC5 /* APIClient.swift in Sources */,
+				EEB89FDF4D6FF9A58D210A73 /* AppTheme.swift in Sources */,
 				065F73E8C87A9447EDB4F234 /* AuthView.swift in Sources */,
 				85B5A65AA56D93F52DC2A520 /* ExploreView.swift in Sources */,
 				BC59811AA11A075814BC76DB /* Models.swift in Sources */,
 				D11FFECEFFEBBA99EFFB01F0 /* PlaceMapView.swift in Sources */,
 				AEBC14F218163BCF038C97A2 /* PlanView.swift in Sources */,
 				7E4339ABD3BF916100F31C5D /* SessionStore.swift in Sources */,
+				73314AB6284D2F56DE8E7ABF /* SocialView.swift in Sources */,
 				AF16086298D54FA2C42418C6 /* TripWeaveriOSApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

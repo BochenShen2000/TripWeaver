@@ -41,6 +41,30 @@ private struct RequestCodeResponse: Decodable {
     let debugCode: String
 }
 
+private struct AuthInputField: View {
+    let placeholder: String
+    @Binding var text: String
+    var secure: Bool = false
+    var keyboard: UIKeyboardType = .default
+    var noAutoCorrect: Bool = false
+
+    var body: some View {
+        Group {
+            if secure {
+                SecureField(placeholder, text: $text)
+            } else {
+                TextField(placeholder, text: $text)
+                    .keyboardType(keyboard)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(noAutoCorrect)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 11)
+        .background(Color.white.opacity(0.92), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
 struct AuthView: View {
     @EnvironmentObject private var session: SessionStore
 
@@ -61,96 +85,23 @@ struct AuthView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("后端地址") {
-                    TextField("http://127.0.0.1:3000", text: $session.apiBaseURL)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled(true)
-                        .keyboardType(.URL)
-                    Text("上线后改成你的公网域名，例如 https://api.yourdomain.com")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
+            ZStack {
+                AppGradientBackground()
 
-                Section("账号状态") {
-                    if let user = session.user {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(user.displayName).font(.headline)
-                            Text("@\(user.username)")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-                        Button("退出登录", role: .destructive) {
-                            session.logout()
-                        }
-                    } else {
-                        Text("未登录")
-                            .foregroundStyle(.secondary)
+                ScrollView {
+                    VStack(spacing: 12) {
+                        titleCard
+                        serverCard
+                        accountCard
+                        authCard
+                        oauthCard
                     }
-
-                    if !session.message.isEmpty {
-                        Text(session.message)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                Section("登录方式") {
-                    Picker("模式", selection: $mode) {
-                        ForEach(AuthMode.allCases) { m in
-                            Text(m.rawValue).tag(m)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-
-                    switch mode {
-                    case .login:
-                        TextField("用户名/邮箱", text: $loginIdentifier)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled(true)
-                        SecureField("密码", text: $loginPassword)
-                        Button(loading ? "登录中..." : "密码登录") {
-                            Task { await login() }
-                        }
-                        .disabled(loading)
-                    case .register:
-                        TextField("昵称", text: $regDisplayName)
-                        TextField("用户名", text: $regUsername)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled(true)
-                        TextField("邮箱（可选）", text: $regEmail)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled(true)
-                        SecureField("密码", text: $regPassword)
-                        Button(loading ? "注册中..." : "创建账号") {
-                            Task { await register() }
-                        }
-                        .disabled(loading)
-                    case .code:
-                        TextField("邮箱或手机号", text: $codeIdentifier)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled(true)
-                        TextField("验证码", text: $codeValue)
-                        TextField("首次登录昵称（可选）", text: $codeDisplayName)
-                        Button("获取验证码") {
-                            Task { await requestCode() }
-                        }
-                        .disabled(loading)
-                        Button(loading ? "登录中..." : "验证码登录") {
-                            Task { await codeLogin() }
-                        }
-                        .disabled(loading)
-                    }
-                }
-
-                Section("第三方快捷登录（Demo）") {
-                    oauthRow(title: "Google", provider: "google")
-                    oauthRow(title: "Apple", provider: "apple")
-                    oauthRow(title: "WeChat", provider: "wechat")
-                    oauthRow(title: "GitHub", provider: "github")
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
                 }
             }
-            .navigationTitle("账号")
+            .navigationTitle("账号中心")
+            .toolbarTitleDisplayMode(.inline)
             .task {
                 if session.user == nil, !session.token.isEmpty {
                     await session.refreshMe()
@@ -159,11 +110,147 @@ struct AuthView: View {
         }
     }
 
+    private var titleCard: some View {
+        TWCard {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("TripWeaver")
+                    .font(.title2.weight(.bold))
+                Text("支持密码、验证码、第三方快捷登录")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var serverCard: some View {
+        TWCard {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("后端地址")
+                    .font(.headline)
+                AuthInputField(
+                    placeholder: "https://api.yourdomain.com",
+                    text: $session.apiBaseURL,
+                    keyboard: .URL,
+                    noAutoCorrect: true
+                )
+                Text("开发时可用 http://127.0.0.1:3000")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var accountCard: some View {
+        TWCard {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("当前状态")
+                    .font(.headline)
+                if let user = session.user {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(user.displayName)
+                            .font(.subheadline.weight(.semibold))
+                        Text("@\(user.username)")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    Button("退出登录") {
+                        session.logout()
+                    }
+                    .buttonStyle(TWSecondaryButtonStyle())
+                } else {
+                    Text("未登录")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                if !session.message.isEmpty {
+                    Text(session.message)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var authCard: some View {
+        TWCard {
+            VStack(spacing: 10) {
+                Picker("模式", selection: $mode) {
+                    ForEach(AuthMode.allCases) { m in
+                        Text(m.rawValue).tag(m)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                switch mode {
+                case .login:
+                    AuthInputField(placeholder: "用户名/邮箱", text: $loginIdentifier, noAutoCorrect: true)
+                    AuthInputField(placeholder: "密码", text: $loginPassword, secure: true)
+                    Button(loading ? "登录中..." : "密码登录") {
+                        Task { await login() }
+                    }
+                    .buttonStyle(TWPrimaryButtonStyle())
+                    .disabled(loading)
+
+                case .register:
+                    AuthInputField(placeholder: "昵称", text: $regDisplayName)
+                    AuthInputField(placeholder: "用户名", text: $regUsername, noAutoCorrect: true)
+                    AuthInputField(placeholder: "邮箱（可选）", text: $regEmail, noAutoCorrect: true)
+                    AuthInputField(placeholder: "密码", text: $regPassword, secure: true)
+                    Button(loading ? "注册中..." : "创建账号") {
+                        Task { await register() }
+                    }
+                    .buttonStyle(TWPrimaryButtonStyle())
+                    .disabled(loading)
+
+                case .code:
+                    AuthInputField(placeholder: "邮箱或手机号", text: $codeIdentifier, noAutoCorrect: true)
+                    AuthInputField(placeholder: "验证码", text: $codeValue)
+                    AuthInputField(placeholder: "首次登录昵称（可选）", text: $codeDisplayName)
+
+                    HStack(spacing: 8) {
+                        Button("获取验证码") {
+                            Task { await requestCode() }
+                        }
+                        .buttonStyle(TWSecondaryButtonStyle())
+                        .disabled(loading)
+
+                        Button(loading ? "登录中..." : "验证码登录") {
+                            Task { await codeLogin() }
+                        }
+                        .buttonStyle(TWPrimaryButtonStyle())
+                        .disabled(loading)
+                    }
+                }
+            }
+        }
+    }
+
+    private var oauthCard: some View {
+        TWCard {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("第三方快捷登录（Demo）")
+                    .font(.headline)
+                HStack(spacing: 8) {
+                    oauthButton(title: "Google", provider: "google")
+                    oauthButton(title: "Apple", provider: "apple")
+                }
+                HStack(spacing: 8) {
+                    oauthButton(title: "WeChat", provider: "wechat")
+                    oauthButton(title: "GitHub", provider: "github")
+                }
+            }
+        }
+    }
+
     @ViewBuilder
-    private func oauthRow(title: String, provider: String) -> some View {
+    private func oauthButton(title: String, provider: String) -> some View {
         Button(title) {
             Task { await oauthLogin(provider: provider) }
         }
+        .buttonStyle(TWSecondaryButtonStyle())
         .disabled(loading)
     }
 

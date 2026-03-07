@@ -12,6 +12,26 @@ private struct CreateActivityBody: Encodable {
     let bookingLinks: BookingLinks?
 }
 
+private struct PlanInputField: View {
+    let title: String
+    let placeholder: String
+    @Binding var text: String
+    var keyboard: UIKeyboardType = .default
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            TextField(placeholder, text: $text)
+                .keyboardType(keyboard)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(Color.white.opacity(0.9), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        }
+    }
+}
+
 struct PlanView: View {
     @EnvironmentObject private var session: SessionStore
 
@@ -20,119 +40,188 @@ struct PlanView: View {
     @State private var plan: Plan?
     @State private var errorMessage = ""
     @State private var activityMessage = ""
+    @State private var showAdvanced = false
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 16) {
-                    intentForm
+            ZStack {
+                AppGradientBackground()
 
-                    Button {
-                        Task { await generatePlan() }
-                    } label: {
-                        HStack {
-                            if loading { ProgressView().controlSize(.small) }
-                            Text(loading ? "生成中..." : "AI 生成路线")
-                                .fontWeight(.semibold)
+                ScrollView {
+                    VStack(spacing: 12) {
+                        quickEntryCard
+                        inputCard
+                        actionCard
+
+                        if let plan {
+                            planCard(plan)
                         }
-                        .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(loading)
-
-                    if !errorMessage.isEmpty {
-                        Text(errorMessage)
-                            .font(.footnote)
-                            .foregroundStyle(.red)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-
-                    if let plan {
-                        planCard(plan)
-                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
                 }
-                .padding()
             }
             .navigationTitle("路线生成")
+            .toolbarTitleDisplayMode(.inline)
         }
     }
 
-    private var intentForm: some View {
-        VStack(spacing: 12) {
-            Group {
-                TextField("同伴（朋友/同学/情侣）", text: $intent.companion)
-                TextField("人数", text: $intent.people)
-                    .keyboardType(.numberPad)
-                TextField("预算（低预算/中预算/高预算）", text: $intent.budget)
-                TextField("时间段（今天晚上/周末半天/周末全天）", text: $intent.timeSlot)
-                TextField("兴趣（美食/看展/city walk）", text: $intent.interest)
-                TextField("区域（例如 Tokyo, Japan）", text: $intent.area)
-                TextField("城市（可选）", text: $intent.city)
-                TextField("国家（可选）", text: $intent.country)
-                TextField("开始日期 YYYY-MM-DD（可选）", text: $intent.startDate)
-                TextField("结束日期 YYYY-MM-DD（可选）", text: $intent.endDate)
+    private var quickEntryCard: some View {
+        TWCard {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("AI 活动发起器")
+                    .font(.headline)
+                Text("输入你的同伴和兴趣，自动生成可执行路线")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        quickTag("今晚 city walk") {
+                            intent.timeSlot = "今天晚上"
+                            intent.interest = "city walk"
+                        }
+                        quickTag("周末咖啡+展") {
+                            intent.timeSlot = "周末半天"
+                            intent.interest = "咖啡+看展"
+                        }
+                        quickTag("情侣约会") {
+                            intent.companion = "情侣"
+                            intent.people = "2"
+                            intent.interest = "夜景+餐厅"
+                        }
+                    }
+                }
             }
-            .textFieldStyle(.roundedBorder)
         }
+    }
+
+    private var inputCard: some View {
+        TWCard {
+            VStack(spacing: 10) {
+                PlanInputField(title: "同伴关系", placeholder: "朋友/同学/情侣", text: $intent.companion)
+                PlanInputField(title: "人数", placeholder: "2", text: $intent.people, keyboard: .numberPad)
+                PlanInputField(title: "预算", placeholder: "低预算/中预算/高预算", text: $intent.budget)
+                PlanInputField(title: "时间段", placeholder: "今天晚上/周末半天", text: $intent.timeSlot)
+                PlanInputField(title: "兴趣", placeholder: "美食/看展/city walk", text: $intent.interest)
+                PlanInputField(title: "区域", placeholder: "Tokyo, Japan", text: $intent.area)
+
+                DisclosureGroup(isExpanded: $showAdvanced) {
+                    VStack(spacing: 10) {
+                        PlanInputField(title: "城市", placeholder: "Tokyo", text: $intent.city)
+                        PlanInputField(title: "国家", placeholder: "Japan", text: $intent.country)
+                        PlanInputField(title: "开始日期", placeholder: "YYYY-MM-DD", text: $intent.startDate)
+                        PlanInputField(title: "结束日期", placeholder: "YYYY-MM-DD", text: $intent.endDate)
+                        PlanInputField(title: "出发国家", placeholder: "Singapore", text: $intent.fromCountry)
+                    }
+                    .padding(.top, 8)
+                } label: {
+                    Text("高级参数")
+                        .font(.subheadline.weight(.medium))
+                }
+            }
+        }
+    }
+
+    private var actionCard: some View {
+        TWCard {
+            VStack(spacing: 8) {
+                Button {
+                    Task { await generatePlan() }
+                } label: {
+                    HStack {
+                        if loading { ProgressView().tint(.white).controlSize(.small) }
+                        Text(loading ? "生成中..." : "AI 生成路线")
+                    }
+                }
+                .buttonStyle(TWPrimaryButtonStyle())
+                .disabled(loading)
+
+                if !errorMessage.isEmpty {
+                    Text(errorMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                if !activityMessage.isEmpty {
+                    Text(activityMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.green)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+    }
+
+    private func quickTag(_ label: String, apply: @escaping () -> Void) -> some View {
+        Button(label) {
+            apply()
+        }
+        .font(.caption.weight(.semibold))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color.white.opacity(0.85), in: Capsule())
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder
     private func planCard(_ plan: Plan) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(plan.title)
-                .font(.title3.bold())
+        TWCard {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(plan.title)
+                    .font(.title3.bold())
 
-            if let budget = plan.budgetEstimate {
-                Text("预算：\(budget)")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
+                if let budget = plan.budgetEstimate {
+                    Text("预算：\(budget)")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
 
-            if let summary = plan.routeSummary {
-                Text("总路径：约 \(summary.distanceKm ?? 0, specifier: "%.1f") km / \(summary.durationMin ?? 0) 分钟")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
+                if let summary = plan.routeSummary {
+                    Text("总路径：约 \(summary.distanceKm ?? 0, specifier: "%.1f") km / \(summary.durationMin ?? 0) 分钟")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
 
-            PlaceMapView(route: plan.route)
+                PlaceMapView(route: plan.route)
 
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(Array(plan.route.enumerated()), id: \.element.id) { idx, stop in
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("\(idx + 1). \((stop.date ?? "")) \((stop.time ?? "")) \(stop.point)")
-                            .font(.subheadline.weight(.semibold))
-                        Text(stop.intro ?? "")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                        if let reason = stop.recommendReason, !reason.isEmpty {
-                            Text(reason)
-                                .font(.caption)
-                                .foregroundStyle(.indigo)
+                VStack(spacing: 8) {
+                    ForEach(Array(plan.route.enumerated()), id: \.element.id) { idx, stop in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("\(idx + 1). \((stop.date ?? "")) \((stop.time ?? "")) \(stop.point)")
+                                .font(.subheadline.weight(.semibold))
+                            if let intro = stop.intro {
+                                Text(intro)
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(3)
+                            }
+                            if let reason = stop.recommendReason, !reason.isEmpty {
+                                Text(reason)
+                                    .font(.caption)
+                                    .foregroundStyle(AppTheme.brandDeep)
+                            }
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 9)
+                        .background(Color.white.opacity(0.78), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
                     }
                 }
-            }
 
-            if let reason = plan.reason, !reason.isEmpty {
-                Text(reason)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
+                if let reason = plan.reason, !reason.isEmpty {
+                    Text(reason)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
 
-            Button("一键发起活动") {
-                Task { await createActivity(from: plan) }
-            }
-            .buttonStyle(.bordered)
-
-            if !activityMessage.isEmpty {
-                Text(activityMessage)
-                    .font(.footnote)
-                    .foregroundStyle(.green)
+                Button("一键发起活动") {
+                    Task { await createActivity(from: plan) }
+                }
+                .buttonStyle(TWSecondaryButtonStyle())
             }
         }
-        .padding()
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
     }
 
     private func generatePlan() async {

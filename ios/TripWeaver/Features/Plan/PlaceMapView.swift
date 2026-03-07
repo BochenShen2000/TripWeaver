@@ -11,29 +11,39 @@ struct PlaceMapView: View {
     }
 
     var body: some View {
-        Map(position: $position) {
-            ForEach(Array(route.enumerated()), id: \.element.id) { idx, stop in
-                if let coordinate = stop.coordinate {
-                    Marker("\(idx + 1). \(stop.point)", coordinate: coordinate)
-                        .tint(stop.verified == true ? .blue : .orange)
+        ZStack(alignment: .topLeading) {
+            Map(position: $position) {
+                ForEach(Array(route.enumerated()), id: \.element.id) { idx, stop in
+                    if let coordinate = stop.coordinate {
+                        Marker("\(idx + 1). \(stop.point)", coordinate: coordinate)
+                            .tint(stop.verified == true ? AppTheme.brand : .orange)
+                    }
+                }
+
+                if coordinates.count >= 2 {
+                    MapPolyline(coordinates: coordinates)
+                        .stroke(AppTheme.brandDeep, lineWidth: 4)
                 }
             }
+            .mapStyle(.standard(elevation: .realistic))
 
-            if coordinates.count >= 2 {
-                MapPolyline(coordinates: coordinates)
-                    .stroke(.indigo, lineWidth: 4)
-            }
+            Text("Google 路线点位已映射")
+                .font(.caption2.weight(.semibold))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(Color.white.opacity(0.88), in: Capsule())
+                .padding(10)
         }
         .frame(height: 260)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(0.75), lineWidth: 1)
         }
         .onAppear {
             fitToRoute()
         }
-        .onChange(of: route.map(\ .id).joined(separator: "|")) { _, _ in
+        .onChange(of: route.map(\.id).joined(separator: "|")) { _, _ in
             fitToRoute()
         }
     }
@@ -51,8 +61,8 @@ struct PlaceMapView: View {
             return
         }
 
-        let lats = coordinates.map(\ .latitude)
-        let lngs = coordinates.map(\ .longitude)
+        let lats = coordinates.map(\.latitude)
+        let lngs = coordinates.map(\.longitude)
         guard
             let minLat = lats.min(),
             let maxLat = lats.max(),

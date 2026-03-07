@@ -8,6 +8,7 @@ struct TripWeaveriOSApp: App {
         WindowGroup {
             RootTabView()
                 .environmentObject(session)
+                .tint(AppTheme.brand)
                 .task {
                     await session.bootstrap()
                 }
@@ -20,12 +21,17 @@ struct RootTabView: View {
         TabView {
             PlanView()
                 .tabItem {
-                    Label("路线", systemImage: "map")
+                    Label("路线", systemImage: "map.fill")
                 }
 
             ExploreView()
                 .tabItem {
                     Label("发现", systemImage: "sparkles")
+                }
+
+            SocialView()
+                .tabItem {
+                    Label("聊天", systemImage: "message.fill")
                 }
 
             AuthView()

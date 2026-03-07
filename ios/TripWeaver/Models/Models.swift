@@ -140,9 +140,30 @@ struct ChatMessage: Codable, Identifiable {
     let id: String
     let content: String
     let user: AuthUser?
+    let fromUserId: String?
+    let toUserId: String?
     let createdAt: String?
+}
+
+struct FriendRequest: Codable, Identifiable {
+    let id: String
+    let fromUserId: String
+    let toUserId: String
+    let status: String
+    let createdAt: String?
+    let respondedAt: String?
 }
 
 struct FriendsPayload: Codable {
     let friends: [AuthUser]
+    let requests: [FriendRequest]?
+}
+
+struct CampusGroup: Codable, Identifiable {
+    let id: String
+    let name: String
+    let description: String?
+    let campusName: String?
+    let members: [AuthUser]?
+    let createdAt: String?
 }
