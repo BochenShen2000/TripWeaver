@@ -209,6 +209,17 @@ def parse_bool(value: Any, default: bool = False) -> bool:
     return default
 
 
+def normalize_privacy(value: Any, default: str = "私密") -> str:
+    raw = normalize_key(value)
+    if raw in {"公开", "public", "open", "global"}:
+        return "公开"
+    if raw in {"私密", "private", "secret"}:
+        return "私密"
+    if raw in {"好友可见", "friends", "friends_only"}:
+        return "好友可见"
+    return default
+
+
 SMTP_PORT = clamp(to_int(SMTP_PORT_RAW, 587), 1, 65535)
 SMTP_USE_TLS = parse_bool(SMTP_USE_TLS_RAW, True)
 SMTP_USE_SSL = parse_bool(SMTP_USE_SSL_RAW, False)
@@ -1920,7 +1931,8 @@ def create_activity(plan: Dict[str, Any], user: Optional[Dict[str, Any]] = None)
     title = normalize_text(launch_cfg.get("title") or plan.get("title") or "活动")
     description = normalize_text(launch_cfg.get("description") or plan.get("reason"))
     calendar_name = normalize_text(launch_cfg.get("calendar") or "个人日历")
-    privacy = normalize_text(launch_cfg.get("privacy") or "私密")
+    privacy = normalize_privacy(launch_cfg.get("privacy"), default="私密")
+    is_public = privacy == "公开"
     timezone_label = normalize_text(launch_cfg.get("timezone") or "GMT+08:00 新加坡")
     theme = normalize_text(launch_cfg.get("theme") or "量子")
     cover_image = normalize_text(launch_cfg.get("coverImage"))
@@ -1960,6 +1972,7 @@ def create_activity(plan: Dict[str, Any], user: Optional[Dict[str, Any]] = None)
         "createdAt": now_iso(),
         "calendar": calendar_name,
         "privacy": privacy,
+        "isPublic": is_public,
         "timezone": timezone_label,
         "description": description,
         "theme": theme,
@@ -1986,12 +1999,15 @@ def create_activity(plan: Dict[str, Any], user: Optional[Dict[str, Any]] = None)
         "creator": creator_public,
         "rsvps": [{"userId": user["id"], "status": "going", "at": now_iso(), "user": creator_public}] if user else [],
         "createdAt": now_iso(),
+        "privacy": privacy,
+        "isPublic": is_public,
         "geo": geo,
         "route": route,
         "routePath": plan.get("routePath") if isinstance(plan.get("routePath"), list) else [],
         "settings": {
             "calendar": calendar_name,
             "privacy": privacy,
+            "isPublic": is_public,
             "timezone": timezone_label,
             "theme": theme,
             "ticketPriceLabel": ticket_price_label or "免费",
@@ -2649,10 +2665,121 @@ def post_campus_group_message(group_id: str, payload: Dict[str, Any], user: Dict
 # -----------------------------
 
 
-def can_access_campus_only(campus_only: bool, user: Optional[Dict[str, Any]]) -> bool:
-    if not campus_only:
+INTEREST_VISIBILITY_PUBLIC = "public"
+INTEREST_VISIBILITY_CAMPUS = "campus"
+INTEREST_VISIBILITY_INVITE = "invite"
+
+
+def normalize_interest_group_visibility(value: Any, default: str = INTEREST_VISIBILITY_PUBLIC) -> str:
+    raw = normalize_key(value)
+    if raw in {"public", "公开", "open", "all", "everyone"}:
+        return INTEREST_VISIBILITY_PUBLIC
+    if raw in {"campus", "school", "同校", "同个学校", "校园", "campus_only", "school_only"}:
+        return INTEREST_VISIBILITY_CAMPUS
+    if raw in {"invite", "invite_only", "invitation", "仅邀请", "受邀", "private"}:
+        return INTEREST_VISIBILITY_INVITE
+    return default
+
+
+def resolve_interest_group_visibility(group: Dict[str, Any]) -> str:
+    visibility = normalize_interest_group_visibility(group.get("visibility"), "")
+    if visibility:
+        return visibility
+    if parse_bool(group.get("campusOnly"), False):
+        return INTEREST_VISIBILITY_CAMPUS
+    return INTEREST_VISIBILITY_PUBLIC
+
+
+def is_interest_group_member(group: Dict[str, Any], user_id: str) -> bool:
+    uid = normalize_text(user_id)
+    if not uid:
+        return False
+    members = group.get("members") if isinstance(group.get("members"), list) else []
+    return any(normalize_text(m.get("id")) == uid for m in members if isinstance(m, dict))
+
+
+def can_access_campus_group(group: Dict[str, Any], user: Optional[Dict[str, Any]]) -> bool:
+    if not user or not user.get("campusVerified"):
+        return False
+    group_campus = normalize_key(group.get("campusName"))
+    if not group_campus:
         return True
-    return bool(user and user.get("campusVerified"))
+    user_campus = normalize_key(user.get("campusName"))
+    return bool(user_campus and user_campus == group_campus)
+
+
+def parse_invite_usernames(value: Any) -> List[str]:
+    items: List[str] = []
+    if isinstance(value, list):
+        raw_items = value
+    else:
+        raw_items = re.split(r"[,\n;，；\s]+", normalize_text(value))
+    for raw in raw_items:
+        text = normalize_text(raw).lstrip("@").lower()
+        if text and text not in items:
+            items.append(text)
+    return items
+
+
+def resolve_interest_group_invite_user_ids(payload: Dict[str, Any]) -> List[str]:
+    user_ids: List[str] = []
+    raw_user_ids = payload.get("inviteUserIds") if isinstance(payload.get("inviteUserIds"), list) else []
+    for raw_uid in raw_user_ids:
+        uid = normalize_text(raw_uid)
+        if uid and uid not in user_ids:
+            user_ids.append(uid)
+    for username in parse_invite_usernames(payload.get("inviteUsernames")):
+        target_user = get_user_by_username(username)
+        if target_user and target_user["id"] not in user_ids:
+            user_ids.append(target_user["id"])
+    return user_ids
+
+
+def can_access_interest_group(group: Dict[str, Any], user: Optional[Dict[str, Any]]) -> bool:
+    visibility = resolve_interest_group_visibility(group)
+    if visibility == INTEREST_VISIBILITY_PUBLIC:
+        return True
+    if not user:
+        return False
+    user_id = normalize_text(user.get("id"))
+    if is_interest_group_member(group, user_id):
+        return True
+    creator = group.get("creator") if isinstance(group.get("creator"), dict) else {}
+    if normalize_text(creator.get("id")) == user_id:
+        return True
+    if visibility == INTEREST_VISIBILITY_CAMPUS:
+        return can_access_campus_group(group, user)
+    if visibility == INTEREST_VISIBILITY_INVITE:
+        allowed = group.get("allowedUserIds") if isinstance(group.get("allowedUserIds"), list) else []
+        return any(normalize_text(uid) == user_id for uid in allowed)
+    return True
+
+
+def can_join_interest_group(group: Dict[str, Any], user: Dict[str, Any]) -> bool:
+    visibility = resolve_interest_group_visibility(group)
+    if visibility == INTEREST_VISIBILITY_PUBLIC:
+        return True
+    if visibility == INTEREST_VISIBILITY_CAMPUS:
+        return can_access_campus_group(group, user)
+    if visibility == INTEREST_VISIBILITY_INVITE:
+        user_id = normalize_text(user.get("id"))
+        if is_interest_group_member(group, user_id):
+            return True
+        creator = group.get("creator") if isinstance(group.get("creator"), dict) else {}
+        if normalize_text(creator.get("id")) == user_id:
+            return True
+        allowed = group.get("allowedUserIds") if isinstance(group.get("allowedUserIds"), list) else []
+        return any(normalize_text(uid) == user_id for uid in allowed)
+    return True
+
+
+def interest_group_join_denied_reason(group: Dict[str, Any]) -> str:
+    visibility = resolve_interest_group_visibility(group)
+    if visibility == INTEREST_VISIBILITY_CAMPUS:
+        return "仅同校认证用户可加入该兴趣群。"
+    if visibility == INTEREST_VISIBILITY_INVITE:
+        return "该兴趣群仅限受邀用户加入。"
+    return "当前用户无权限加入该兴趣群。"
 
 
 @app.get("/api/interest/groups")
@@ -2674,7 +2801,7 @@ def get_interest_groups(
     if q:
         key = normalize_key(q)
         groups = [g for g in groups if key in normalize_key(f"{g.get('name', '')} {g.get('description', '')}")]
-    groups = [g for g in groups if can_access_campus_only(bool(g.get("campusOnly")), user)]
+    groups = [g for g in groups if can_access_interest_group(g, user)]
     return groups
 
 
@@ -2687,9 +2814,32 @@ def create_interest_group(payload: Dict[str, Any], user: Dict[str, Any] = Depend
     if not name or not interest or not city or not country:
         raise HTTPException(status_code=400, detail="name, interest, city, country are required.")
 
-    campus_only = bool(payload.get("campusOnly"))
-    if campus_only and not user.get("campusVerified"):
+    legacy_campus_only = parse_bool(payload.get("campusOnly"), False)
+    visibility = normalize_interest_group_visibility(
+        payload.get("visibility"),
+        INTEREST_VISIBILITY_CAMPUS if legacy_campus_only else INTEREST_VISIBILITY_PUBLIC,
+    )
+    if visibility == INTEREST_VISIBILITY_CAMPUS and not user.get("campusVerified"):
         raise HTTPException(status_code=403, detail="Campus verification required for campus-only group.")
+
+    campus_name = normalize_text(payload.get("campusName") or (user.get("campusName") if visibility == INTEREST_VISIBILITY_CAMPUS else ""))
+    if visibility == INTEREST_VISIBILITY_CAMPUS and not campus_name:
+        raise HTTPException(status_code=400, detail="Campus name is required for campus-visibility group.")
+
+    invited_user_ids = resolve_interest_group_invite_user_ids(payload)
+    allowed_user_ids: List[str] = []
+    if visibility == INTEREST_VISIBILITY_INVITE:
+        allowed_user_ids.append(user["id"])
+        for uid in invited_user_ids:
+            if uid not in allowed_user_ids:
+                allowed_user_ids.append(uid)
+    invited_users: List[Dict[str, Any]] = []
+    for uid in allowed_user_ids:
+        if uid == user["id"]:
+            continue
+        invited_user = get_user_by_id(uid)
+        if invited_user:
+            invited_users.append(to_public_user(invited_user))
 
     group = {
         "id": new_id("IG"),
@@ -2698,7 +2848,11 @@ def create_interest_group(payload: Dict[str, Any], user: Dict[str, Any] = Depend
         "city": city,
         "country": country,
         "description": normalize_text(payload.get("description")),
-        "campusOnly": campus_only,
+        "visibility": visibility,
+        "campusOnly": visibility == INTEREST_VISIBILITY_CAMPUS,
+        "campusName": campus_name,
+        "allowedUserIds": allowed_user_ids if visibility == INTEREST_VISIBILITY_INVITE else [],
+        "invitedUsers": invited_users if visibility == INTEREST_VISIBILITY_INVITE else [],
         "creator": to_public_user(user),
         "members": [to_public_user(user)],
         "nextMeetupAt": ensure_iso_datetime(payload.get("nextMeetupAt")) or (datetime.now(timezone.utc) + timedelta(days=5)).isoformat(),
@@ -2714,12 +2868,17 @@ def join_interest_group(group_id: str, user: Dict[str, Any] = Depends(auth_user)
     group = get_doc("interest_groups", group_id)
     if not group:
         raise HTTPException(status_code=404, detail="Group not found.")
-    if bool(group.get("campusOnly")) and not user.get("campusVerified"):
-        raise HTTPException(status_code=403, detail="Campus verification required.")
+    if not can_join_interest_group(group, user):
+        raise HTTPException(status_code=403, detail=interest_group_join_denied_reason(group))
     members = group.get("members") if isinstance(group.get("members"), list) else []
     if not any(m.get("id") == user["id"] for m in members if isinstance(m, dict)):
         members.append(to_public_user(user))
     group["members"] = members
+    if resolve_interest_group_visibility(group) == INTEREST_VISIBILITY_INVITE:
+        allowed = group.get("allowedUserIds") if isinstance(group.get("allowedUserIds"), list) else []
+        if user["id"] not in allowed:
+            allowed.append(user["id"])
+        group["allowedUserIds"] = allowed
     replace_doc("interest_groups", group_id, group)
     return group
 
@@ -3063,6 +3222,18 @@ def get_local_events(city: str = "", country: str = "", category: str = "", q: s
     if q:
         key = normalize_key(q)
         events = [e for e in events if key in normalize_key(f"{e.get('title', '')} {e.get('description', '')} {','.join(e.get('tags') or [])}")]
+    filtered: List[Dict[str, Any]] = []
+    for item in events:
+        source = normalize_key(item.get("source"))
+        cat = normalize_key(item.get("category"))
+        if source == "activity_route" or "route" in cat:
+            settings = item.get("settings") if isinstance(item.get("settings"), dict) else {}
+            privacy = normalize_privacy(settings.get("privacy") or item.get("privacy"), default="私密")
+            is_public = parse_bool(item.get("isPublic"), default=(privacy == "公开"))
+            if not is_public:
+                continue
+        filtered.append(item)
+    events = filtered
     return events
 
 
@@ -3077,6 +3248,11 @@ def discovery_upcoming_routes(city: str = "", country: str = "", limit: int = 10
         source = normalize_key(item.get("source"))
         category = normalize_key(item.get("category"))
         if source != "activity_route" and "route" not in category:
+            continue
+        settings = item.get("settings") if isinstance(item.get("settings"), dict) else {}
+        privacy = normalize_privacy(settings.get("privacy") or item.get("privacy"), default="私密")
+        is_public = parse_bool(item.get("isPublic"), default=(privacy == "公开"))
+        if not is_public:
             continue
         if city and normalize_key(city) not in normalize_key(item.get("city")):
             continue

@@ -441,15 +441,24 @@ struct PlanView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                activityComposerSection(renderedPlan)
-
                 if let reason = renderedPlan.reason, !reason.isEmpty {
                     Text(reason)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
 
-                Button("创建活动") {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("活动可见性")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Picker("活动可见性", selection: $launchPrivacy) {
+                        Text("私密").tag("私密")
+                        Text("公开").tag("公开")
+                    }
+                    .pickerStyle(.segmented)
+                }
+
+                Button("一键创建活动") {
                     Task {
                         await createActivity(from: renderedPlan, launchConfig: buildLaunchConfig())
                     }
@@ -1005,7 +1014,8 @@ struct PlanView: View {
             )
             let when = formatShortTime(result.startAt)
             let whereText = result.venueName ?? "待定地点"
-            activityMessage = "活动已发起：\(result.code ?? "-") · \(when) @ \(whereText)"
+            let privacy = result.privacy ?? launchPrivacy
+            activityMessage = "活动已发起：\(result.code ?? "-") · \(privacy) · \(when) @ \(whereText)"
         } catch {
             activityMessage = "发起失败：\(error.localizedDescription)"
         }

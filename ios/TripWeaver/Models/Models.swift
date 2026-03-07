@@ -147,6 +147,7 @@ struct GenerateActivityResponse: Codable {
     let venueName: String?
     let city: String?
     let country: String?
+    let privacy: String?
     let localEventId: String?
 }
 
@@ -218,6 +219,25 @@ struct CampusGroup: Codable, Identifiable {
     let createdAt: String?
 }
 
+enum InterestGroupVisibility: String, Codable, CaseIterable, Identifiable {
+    case `public` = "public"
+    case campus = "campus"
+    case invite = "invite"
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .public:
+            return "公开可见"
+        case .campus:
+            return "同个学校可见"
+        case .invite:
+            return "仅邀请"
+        }
+    }
+}
+
 struct InterestGroup: Codable, Identifiable {
     let id: String
     let name: String
@@ -225,10 +245,27 @@ struct InterestGroup: Codable, Identifiable {
     let city: String?
     let country: String?
     let description: String?
+    let visibility: String?
     let campusOnly: Bool?
+    let campusName: String?
+    let allowedUserIds: [String]?
     let nextMeetupAt: String?
     let members: [AuthUser]?
     let createdAt: String?
+
+    var resolvedVisibility: InterestGroupVisibility {
+        if let visibility {
+            let normalized = visibility.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if let mode = InterestGroupVisibility(rawValue: normalized) {
+                return mode
+            }
+        }
+        return campusOnly == true ? .campus : .public
+    }
+
+    var visibilityLabel: String {
+        resolvedVisibility.label
+    }
 }
 
 struct DiscoveryRouteEvent: Codable, Identifiable {

@@ -9,6 +9,7 @@ const manualPlaceList = document.getElementById("manual-place-list");
 const manualPlaceSuggestions = document.getElementById("manual-place-suggestions");
 const planSection = document.getElementById("plan-section");
 const planOutput = document.getElementById("plan-output");
+const quickActivityPrivacySelect = document.getElementById("quick-activity-privacy");
 const activityCreateSection = document.getElementById("activity-create-section");
 const createActivityBtn = document.getElementById("create-activity");
 const openActivityCreateBtn = document.getElementById("open-activity-create-btn");
@@ -60,6 +61,9 @@ const summarizeGlobalBtn = document.getElementById("summarize-global-btn");
 const summarizeCampusBtn = document.getElementById("summarize-campus-btn");
 
 const friendRequestForm = document.getElementById("friend-request-form");
+const chatCreateInterestToggleBtn = document.getElementById("chat-create-interest-toggle-btn");
+const chatCreateInterestPanel = document.getElementById("chat-create-interest-panel");
+const chatInterestCreateForm = document.getElementById("chat-interest-create-form");
 const friendsList = document.getElementById("friends-list");
 const chatGroupsList = document.getElementById("chat-groups-list");
 const chatThreadTitle = document.getElementById("chat-thread-title");
@@ -1165,7 +1169,7 @@ function jumpToFlowStep(step) {
   } else if (step === "plan") {
     navigateToScreen("plan", currentPlan ? "plan-section" : "intent-section");
   } else if (step === "launch") {
-    navigateToScreen("plan", currentPlan ? "activity-create-section" : "intent-section");
+    navigateToScreen("plan", currentPlan ? "plan-section" : "intent-section");
   } else if (step === "join") {
     setExplorePanel("events");
     navigateToScreen("explore", "events-section");
@@ -1557,7 +1561,8 @@ function buildTonightDiscussionTemplate(plan) {
 }
 
 async function createAndRenderActivityFromPlan(plan, focusPlanScreen = true, launchConfig = null) {
-  currentActivity = await createActivity(plan, launchConfig);
+  const effectiveLaunchConfig = launchConfig || buildQuickLaunchConfig();
+  currentActivity = await createActivity(plan, effectiveLaunchConfig);
   currentActivity.link = `${location.origin}${location.pathname}?join=${currentActivity.joinToken}`;
   renderActivity(currentActivity);
   activitySection.classList.remove("hidden");
@@ -1783,6 +1788,29 @@ function renderChatThread(messages) {
   chatThreadMessages.scrollTop = chatThreadMessages.scrollHeight;
 }
 
+function normalizeInterestVisibility(value, campusOnly = false) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (raw === "public" || raw === "公开" || raw === "open") return "public";
+  if (raw === "campus" || raw === "同校" || raw === "校园" || raw === "school") return "campus";
+  if (raw === "invite" || raw === "仅邀请" || raw === "invite_only") return "invite";
+  return campusOnly ? "campus" : "public";
+}
+
+function interestVisibilityLabel(group) {
+  const mode = normalizeInterestVisibility(group?.visibility, Boolean(group?.campusOnly));
+  if (mode === "campus") return "同校可见";
+  if (mode === "invite") return "仅邀请";
+  return "公开可见";
+}
+
+function parseInviteUsernames(raw) {
+  const parts = String(raw || "")
+    .split(/[\s,，;；\n]+/)
+    .map((item) => item.trim().replace(/^@+/, "").toLowerCase())
+    .filter(Boolean);
+  return [...new Set(parts)];
+}
+
 function updateChatRouteContext() {
   if (!chatRouteContext) return;
   if (!currentPlan || !Array.isArray(currentPlan.route) || !currentPlan.route.length) {
@@ -1906,12 +1934,14 @@ function renderChatGroupsDirectory() {
 
   for (const g of chatInterestGroups) {
     const isMember = Array.isArray(g.members) && g.members.some((m) => m.id === currentUser.id);
+    const location = [g.city, g.country].filter(Boolean).join(", ");
+    const subtitle = `${g.interest || "兴趣"} · ${location || "地点待定"} · ${interestVisibilityLabel(g)}`;
     groupBlocks.push(`
       <div class="chat-target-row">
         <button class="chat-target-btn ${isMember ? "" : "disabled"}" data-chat-type="interest" data-chat-id="${g.id}" data-chat-name="兴趣群 · ${escapeHtml(
           g.name,
         )}" type="button" ${isMember ? "" : "disabled"}>
-          <strong>${escapeHtml(g.name)}</strong><span>${escapeHtml(g.interest || "兴趣")} · ${escapeHtml(g.city || "")}</span>
+          <strong>${escapeHtml(g.name)}</strong><span>${escapeHtml(subtitle)}</span>
         </button>
         ${isMember ? "" : `<button class="btn-secondary chat-join-interest-btn" data-group-id="${g.id}" type="button">加入</button>`}
       </div>
@@ -2026,8 +2056,9 @@ function renderInterestGroups(groups) {
   }
   communityList.innerHTML = groups
     .map((g) => {
-      const campusTag = g.campusOnly ? "校园限定" : "公开";
+      const visibilityTag = interestVisibilityLabel(g);
       const isMember = Array.isArray(g.members) && g.members.some((m) => m.id === currentUser?.id);
+      const location = [g.city, g.country].filter(Boolean).join(", ") || "地点待定";
       const moreBody = `
         <p class="chat-content">${escapeHtml(g.description || "无描述")}</p>
         <div class="actions">
@@ -2038,8 +2069,8 @@ function renderInterestGroups(groups) {
       `;
       return `
       <article class="travel-item compact">
-        <div class="travel-head"><strong>${escapeHtml(g.name)}</strong><span>${escapeHtml(g.city)}, ${escapeHtml(g.country)}</span></div>
-        <div class="travel-meta">兴趣：${escapeHtml(g.interest)} | 成员：${g.members?.length || 0} | ${campusTag}</div>
+        <div class="travel-head"><strong>${escapeHtml(g.name)}</strong><span>${escapeHtml(location)}</span></div>
+        <div class="travel-meta">兴趣：${escapeHtml(g.interest || "兴趣")} | 成员：${g.members?.length || 0} | ${visibilityTag}</div>
         <div class="travel-meta">下次活动：${new Date(g.nextMeetupAt).toLocaleString()}</div>
         <div class="actions compact-primary-actions">
           <button class="btn-secondary interest-join-btn" data-group-id="${g.id}" type="button">加入社群</button>
@@ -3002,6 +3033,15 @@ function buildLaunchDefaultsFromPlan(plan) {
   };
 }
 
+function getSelectedActivityPrivacy() {
+  const value = String(quickActivityPrivacySelect?.value || "").trim();
+  return value === "公开" ? "公开" : "私密";
+}
+
+function buildQuickLaunchConfig() {
+  return { privacy: getSelectedActivityPrivacy() };
+}
+
 function applyActivityCoverPreview(theme = "") {
   if (!activityCoverPreview) return;
   const selectedTheme = String(theme || activityThemeSelect?.value || "量子").trim() || "量子";
@@ -3254,6 +3294,63 @@ if (logoutBtn) {
 if (goAuthBtn) {
   goAuthBtn.addEventListener("click", () => {
     openAuthPage();
+  });
+}
+
+if (chatCreateInterestToggleBtn && chatCreateInterestPanel) {
+  chatCreateInterestToggleBtn.addEventListener("click", () => {
+    const hidden = chatCreateInterestPanel.classList.contains("hidden");
+    chatCreateInterestPanel.classList.toggle("hidden", !hidden);
+    if (hidden) {
+      chatCreateInterestPanel.setAttribute("open", "open");
+    } else {
+      chatCreateInterestPanel.removeAttribute("open");
+    }
+  });
+}
+
+async function submitInterestGroupCreate(rawData, { formElement = null, fromChat = false } = {}) {
+  const visibility = normalizeInterestVisibility(rawData.visibility, rawData.campusOnly === "true");
+  if (visibility === "campus" && !currentUser?.campusVerified) {
+    throw new Error("同校可见群需要先完成校园认证。");
+  }
+  const inviteUsernames = parseInviteUsernames(rawData.inviteUsernames || "");
+  const payload = {
+    name: rawData.name,
+    interest: rawData.interest,
+    city: rawData.city,
+    country: rawData.country,
+    description: rawData.description || "",
+    visibility,
+    inviteUsernames: visibility === "invite" ? inviteUsernames : [],
+  };
+  await api.createInterestGroup(payload);
+  if (formElement) {
+    formElement.reset();
+    if (fromChat) {
+      if (chatCreateInterestPanel) {
+        chatCreateInterestPanel.classList.add("hidden");
+        chatCreateInterestPanel.removeAttribute("open");
+      }
+    } else {
+      closeComposeCardForElement(formElement);
+    }
+  }
+  await loadInterestGroups();
+  markFlowStep("discover", `${payload.city} ${payload.interest}`);
+}
+
+if (chatInterestCreateForm) {
+  chatInterestCreateForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!currentUser) return alert("请先登录。");
+    const data = Object.fromEntries(new FormData(chatInterestCreateForm).entries());
+    try {
+      await submitInterestGroupCreate(data, { formElement: chatInterestCreateForm, fromChat: true });
+      alert("兴趣群已创建并同步到群聊列表。");
+    } catch (err) {
+      alert(`创建失败: ${err.message}`);
+    }
   });
 }
 
@@ -3727,18 +3824,7 @@ communityForm.addEventListener("submit", async (e) => {
   if (!currentUser) return alert("请先登录。");
   const data = Object.fromEntries(new FormData(communityForm).entries());
   try {
-    await api.createInterestGroup({
-      name: data.name,
-      interest: data.interest,
-      city: data.city,
-      country: data.country,
-      description: data.description,
-      campusOnly: data.campusOnly === "true",
-    });
-    communityForm.reset();
-    closeComposeCardForElement(communityForm);
-    await loadInterestGroups();
-    markFlowStep("discover", `${data.city} ${data.interest}`);
+    await submitInterestGroupCreate(data, { formElement: communityForm, fromChat: false });
     alert("兴趣社群已创建。");
   } catch (err) {
     alert(`创建失败: ${err.message}`);
@@ -4414,12 +4500,16 @@ form.addEventListener("submit", async (e) => {
 });
 
 if (openActivityCreateBtn) {
-  openActivityCreateBtn.addEventListener("click", () => {
+  openActivityCreateBtn.addEventListener("click", async () => {
     if (!currentPlan) {
       navigateToScreen("plan", "intent-section");
       return;
     }
-    navigateToScreen("plan", "activity-create-section");
+    try {
+      await createAndRenderActivityFromPlan(currentPlan, true);
+    } catch (err) {
+      alert(`发起失败: ${err.message}`);
+    }
   });
 }
 

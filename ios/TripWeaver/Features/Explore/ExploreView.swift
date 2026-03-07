@@ -126,20 +126,21 @@ struct ExploreView: View {
                 }
 
                 ForEach(interestGroups.prefix(6)) { group in
+                    let subtitle = "\(group.interest ?? "兴趣") · \(group.city ?? "") \(group.country ?? "") · \(group.visibilityLabel)"
                     NavigationLink {
                         CommunityChatView(
                             communityId: group.id,
                             communityName: group.name,
-                            subtitle: "\(group.interest ?? "兴趣") · \(group.city ?? "") \(group.country ?? "")",
+                            subtitle: subtitle,
                             type: .interest,
                             initiallyMember: isCurrentUserMember(group.members)
                         )
                     } label: {
                         groupRow(
                             title: group.name,
-                            subtitle: "\(group.interest ?? "兴趣") · \(group.city ?? "") \(group.country ?? "")",
+                            subtitle: subtitle,
                             nextTime: group.nextMeetupAt,
-                            badge: "同好群"
+                            badge: interestGroupBadge(group)
                         )
                     }
                     .buttonStyle(.plain)
@@ -196,6 +197,17 @@ struct ExploreView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 9)
         .background(Color.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+    }
+
+    private func interestGroupBadge(_ group: InterestGroup) -> String {
+        switch group.resolvedVisibility {
+        case .public:
+            return "公开"
+        case .campus:
+            return "同校"
+        case .invite:
+            return "邀请"
+        }
     }
 
     private var queryCard: some View {

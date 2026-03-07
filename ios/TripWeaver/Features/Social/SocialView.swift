@@ -8,6 +8,29 @@ private struct FriendRespondBody: Encodable {
     let accept: Bool
 }
 
+private struct CreateInterestGroupBody: Encodable {
+    let name: String
+    let interest: String
+    let city: String
+    let country: String
+    let description: String
+    let visibility: String
+    let campusName: String?
+    let inviteUsernames: [String]?
+    let nextMeetupAt: String?
+}
+
+private struct InterestGroupDraft {
+    var name: String = ""
+    var interest: String = ""
+    var city: String = "Singapore"
+    var country: String = "Singapore"
+    var description: String = ""
+    var visibility: InterestGroupVisibility = .public
+    var inviteUsernamesRaw: String = ""
+    var nextMeetupAt: Date = Calendar.current.date(byAdding: .day, value: 5, to: Date()) ?? Date()
+}
+
 struct SocialView: View {
     @EnvironmentObject private var session: SessionStore
 
@@ -21,6 +44,9 @@ struct SocialView: View {
     @State private var interestGroups: [InterestGroup] = []
     @State private var campusGroups: [CampusGroup] = []
     @State private var joinedEventChats: [DiscoveryRouteEvent] = []
+    @State private var showCreateInterestSheet = false
+    @State private var creatingInterestGroup = false
+    @State private var createInterestDraft = InterestGroupDraft()
 
     var body: some View {
         NavigationStack {
@@ -44,8 +70,23 @@ struct SocialView: View {
             .navigationTitle("聊天")
             .toolbarTitleDisplayMode(.inline)
             .toolbarBackground(.visible, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    if !session.token.isEmpty {
+                        Button {
+                            prepareInterestGroupDraft()
+                            showCreateInterestSheet = true
+                        } label: {
+                            Image(systemName: "plus")
+                        }
+                    }
+                }
+            }
             .overlay(alignment: .topTrailing) {
                 if loading { ProgressView().padding(10) }
+            }
+            .sheet(isPresented: $showCreateInterestSheet) {
+                createInterestGroupSheet
             }
             .task {
                 guard !session.token.isEmpty else { return }
@@ -191,17 +232,18 @@ struct SocialView: View {
                     emptyRow("暂无可加入社群")
                 } else {
                     ForEach(interestGroups) { group in
+                        let subtitle = "\(group.interest ?? "兴趣") · \(group.city ?? "") \(group.country ?? "") · \(group.visibilityLabel)"
                         NavigationLink {
                             ChatThreadView(
                                 title: group.name,
-                                subtitle: "\(group.interest ?? "兴趣") · \(group.city ?? "") \(group.country ?? "")",
+                                subtitle: subtitle,
                                 kind: .interest(groupId: group.id),
                                 initiallyJoined: isCurrentUserMember(group.members)
                             )
                         } label: {
                             chatRow(
                                 title: group.name,
-                                subtitle: "\(group.interest ?? "兴趣") · \(group.city ?? "") \(group.country ?? "")",
+                                subtitle: subtitle,
                                 icon: "person.3.fill"
                             )
                         }
@@ -282,6 +324,175 @@ struct SocialView: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
             .background(Color.white.opacity(0.74), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private var createInterestGroupSheet: some View {
+        NavigationStack {
+            ZStack {
+                AppGradientBackground()
+
+                AppPage {
+                    TWCard {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("创建兴趣群")
+                                .font(.headline)
+                            Text("创建后可在聊天和发现中被看到，并支持加入讨论。")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+
+                            draftField("群名称（如 Tokyo Boardgame Night）", text: $createInterestDraft.name)
+                            draftField("兴趣（如 桌游 / 露营 / 逛展）", text: $createInterestDraft.interest)
+                            draftField("城市", text: $createInterestDraft.city)
+                            draftField("国家", text: $createInterestDraft.country)
+                            draftField("社群介绍（可选）", text: $createInterestDraft.description)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    TWCard {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("可见范围")
+                                .font(.headline)
+                            Picker("可见范围", selection: $createInterestDraft.visibility) {
+                                ForEach(InterestGroupVisibility.allCases) { option in
+                                    Text(option.label).tag(option)
+                                }
+                            }
+                            .pickerStyle(.menu)
+
+                            if createInterestDraft.visibility == .campus {
+                                if let campusName = session.user?.campusName, !campusName.isEmpty {
+                                    Text("将限制为同校用户可见：\(campusName)")
+                                        .font(.footnote)
+                                        .foregroundStyle(.secondary)
+                                } else {
+                                    Text("请先完成校园认证后再创建同校可见群。")
+                                        .font(.footnote)
+                                        .foregroundStyle(.orange)
+                                }
+                            }
+
+                            if createInterestDraft.visibility == .invite {
+                                draftField("邀请用户名（逗号分隔，如 alice,bob）", text: $createInterestDraft.inviteUsernamesRaw)
+                                Text("仅受邀用户可见与加入；你本人默认在邀请名单中。")
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            DatePicker("下次活动时间", selection: $createInterestDraft.nextMeetupAt, displayedComponents: [.date, .hourAndMinute])
+                                .datePickerStyle(.compact)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+            .navigationTitle("新建兴趣群")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("取消") {
+                        showCreateInterestSheet = false
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(creatingInterestGroup ? "创建中..." : "创建") {
+                        Task { await createInterestGroup() }
+                    }
+                    .disabled(!canSubmitInterestGroup || creatingInterestGroup)
+                }
+            }
+        }
+    }
+
+    private func draftField(_ placeholder: String, text: Binding<String>) -> some View {
+        TextField(placeholder, text: text)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(Color.white.opacity(0.9), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+    }
+
+    private var canSubmitInterestGroup: Bool {
+        guard !session.token.isEmpty else { return false }
+        let required = [
+            createInterestDraft.name,
+            createInterestDraft.interest,
+            createInterestDraft.city,
+            createInterestDraft.country,
+        ]
+        if required.contains(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+            return false
+        }
+        if createInterestDraft.visibility == .campus {
+            guard session.user?.campusVerified == true else { return false }
+            let campusName = (session.user?.campusName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if campusName.isEmpty { return false }
+        }
+        return true
+    }
+
+    private func prepareInterestGroupDraft() {
+        var draft = InterestGroupDraft()
+        if let first = interestGroups.first {
+            if let city = first.city, !city.isEmpty {
+                draft.city = city
+            }
+            if let country = first.country, !country.isEmpty {
+                draft.country = country
+            }
+        }
+        createInterestDraft = draft
+    }
+
+    private func parseInviteUsernames(_ raw: String) -> [String] {
+        let separators = CharacterSet(charactersIn: ",，;\n\t ")
+        let parts = raw.components(separatedBy: separators)
+        var out: [String] = []
+        for item in parts {
+            let text = item.trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: "@", with: "")
+                .lowercased()
+            if text.isEmpty { continue }
+            if !out.contains(text) {
+                out.append(text)
+            }
+        }
+        return out
+    }
+
+    private func createInterestGroup() async {
+        guard canSubmitInterestGroup else { return }
+        creatingInterestGroup = true
+        defer { creatingInterestGroup = false }
+
+        let visibility = createInterestDraft.visibility
+        let campusName: String? = visibility == .campus ? (session.user?.campusName ?? "") : nil
+        let inviteUsernames = visibility == .invite ? parseInviteUsernames(createInterestDraft.inviteUsernamesRaw) : []
+        let payload = CreateInterestGroupBody(
+            name: createInterestDraft.name.trimmingCharacters(in: .whitespacesAndNewlines),
+            interest: createInterestDraft.interest.trimmingCharacters(in: .whitespacesAndNewlines),
+            city: createInterestDraft.city.trimmingCharacters(in: .whitespacesAndNewlines),
+            country: createInterestDraft.country.trimmingCharacters(in: .whitespacesAndNewlines),
+            description: createInterestDraft.description.trimmingCharacters(in: .whitespacesAndNewlines),
+            visibility: visibility.rawValue,
+            campusName: campusName,
+            inviteUsernames: inviteUsernames.isEmpty ? nil : inviteUsernames,
+            nextMeetupAt: ISO8601DateFormatter().string(from: createInterestDraft.nextMeetupAt)
+        )
+
+        do {
+            let created: InterestGroup = try await APIClient.request(
+                baseURL: session.apiBaseURL,
+                path: "/api/interest/groups",
+                method: .post,
+                token: session.token,
+                body: payload
+            )
+            message = "兴趣群已创建：\(created.name)"
+            showCreateInterestSheet = false
+            await loadInterestGroups()
+        } catch {
+            message = "创建失败：\(error.localizedDescription)"
+        }
     }
 
     private func refreshAll() async {
