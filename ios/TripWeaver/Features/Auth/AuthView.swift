@@ -148,7 +148,7 @@ struct AuthView: View {
                     keyboard: .URL,
                     noAutoCorrect: true
                 )
-                Text("开发时可用 http://127.0.0.1:3000")
+                Text("部署到公网时必须使用 https://；本地开发可用 http://127.0.0.1:3000")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
