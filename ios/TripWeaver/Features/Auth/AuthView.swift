@@ -36,6 +36,18 @@ private struct OAuthMockBody: Encodable {
     let displayName: String
 }
 
+private struct CampusVerifyBody: Encodable {
+    let campusEmail: String
+    let campusName: String
+    let studentId: String
+}
+
+private struct CampusVerifyResponse: Decodable {
+    let user: AuthUser
+    let campusVerified: Bool?
+    let campusName: String?
+}
+
 private struct RequestCodeResponse: Decodable {
     let identifierHint: String
     let debugCode: String
@@ -82,30 +94,32 @@ struct AuthView: View {
     @State private var codeIdentifier = ""
     @State private var codeValue = ""
     @State private var codeDisplayName = ""
+    @State private var campusName = ""
+    @State private var campusEmail = ""
+    @State private var studentId = ""
 
     var body: some View {
         NavigationStack {
             ZStack {
                 AppGradientBackground()
 
-                ScrollView {
-                    VStack(spacing: 12) {
-                        titleCard
-                        serverCard
-                        accountCard
-                        authCard
-                        oauthCard
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
+                AppPage {
+                    titleCard
+                    serverCard
+                    accountCard
+                    campusVerifyCard
+                    authCard
+                    oauthCard
                 }
             }
             .navigationTitle("账号中心")
             .toolbarTitleDisplayMode(.inline)
+            .toolbarBackground(.visible, for: .navigationBar)
             .task {
                 if session.user == nil, !session.token.isEmpty {
                     await session.refreshMe()
                 }
+                syncCampusFields()
             }
         }
     }
@@ -134,7 +148,7 @@ struct AuthView: View {
                     keyboard: .URL,
                     noAutoCorrect: true
                 )
-                Text("开发时可用 http://127.0.0.1:3000")
+                Text("部署到公网时必须使用 https://；本地开发可用 http://127.0.0.1:3000")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -153,9 +167,13 @@ struct AuthView: View {
                         Text("@\(user.username)")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
+                        campusStatusTag(user)
                     }
                     Button("退出登录") {
                         session.logout()
+                        campusName = ""
+                        campusEmail = ""
+                        studentId = ""
                     }
                     .buttonStyle(TWSecondaryButtonStyle())
                 } else {
@@ -171,6 +189,60 @@ struct AuthView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var campusVerifyCard: some View {
+        TWCard {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("大学生认证")
+                    .font(.headline)
+
+                if let user = session.user {
+                    if user.campusVerified == true {
+                        Text("已认证：\(user.campusName ?? "Campus")")
+                            .font(.footnote)
+                            .foregroundStyle(.green)
+                    } else {
+                        Text("认证后可加入校园群、解锁校园功能")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    AuthInputField(placeholder: "学校名称（例如 NTU）", text: $campusName)
+                    AuthInputField(
+                        placeholder: "校园邮箱（.edu / .ac）",
+                        text: $campusEmail,
+                        keyboard: .emailAddress,
+                        noAutoCorrect: true
+                    )
+                    AuthInputField(placeholder: "学号（可选）", text: $studentId, noAutoCorrect: true)
+
+                    Button(loading ? "认证中..." : "提交校园认证") {
+                        Task { await verifyCampus() }
+                    }
+                    .buttonStyle(TWPrimaryButtonStyle())
+                    .disabled(loading)
+                } else {
+                    Text("请先登录再完成大学生认证")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private func campusStatusTag(_ user: AuthUser) -> some View {
+        if user.campusVerified == true {
+            Text("校园认证已通过")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.green)
+        } else {
+            Text("未校园认证")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.orange)
         }
     }
 
@@ -254,6 +326,41 @@ struct AuthView: View {
         .disabled(loading)
     }
 
+    private func syncCampusFields() {
+        guard let user = session.user else { return }
+        campusName = user.campusName ?? ""
+        campusEmail = user.campusEmail ?? ""
+    }
+
+    private func verifyCampus() async {
+        guard !session.token.isEmpty else {
+            session.message = "请先登录"
+            return
+        }
+        loading = true
+        defer { loading = false }
+
+        do {
+            let payload = CampusVerifyBody(
+                campusEmail: campusEmail.trimmingCharacters(in: .whitespacesAndNewlines),
+                campusName: campusName.trimmingCharacters(in: .whitespacesAndNewlines),
+                studentId: studentId.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+            let result: CampusVerifyResponse = try await APIClient.request(
+                baseURL: session.apiBaseURL,
+                path: "/api/campus/verify",
+                method: .post,
+                token: session.token,
+                body: payload
+            )
+            session.user = result.user
+            syncCampusFields()
+            session.message = "校园认证成功：\(result.campusName ?? result.user.campusName ?? "-")"
+        } catch {
+            session.message = "校园认证失败：\(error.localizedDescription)"
+        }
+    }
+
     private func login() async {
         loading = true
         defer { loading = false }
@@ -265,6 +372,7 @@ struct AuthView: View {
                 body: LoginBody(identifier: loginIdentifier, password: loginPassword)
             )
             session.applyAuth(auth)
+            syncCampusFields()
         } catch {
             session.message = "登录失败：\(error.localizedDescription)"
         }
@@ -286,6 +394,7 @@ struct AuthView: View {
                 )
             )
             session.applyAuth(auth)
+            syncCampusFields()
         } catch {
             session.message = "注册失败：\(error.localizedDescription)"
         }
@@ -323,6 +432,7 @@ struct AuthView: View {
                 )
             )
             session.applyAuth(auth)
+            syncCampusFields()
         } catch {
             session.message = "验证码登录失败：\(error.localizedDescription)"
         }
@@ -344,6 +454,7 @@ struct AuthView: View {
                 )
             )
             session.applyAuth(auth)
+            syncCampusFields()
         } catch {
             session.message = "\(provider) 登录失败：\(error.localizedDescription)"
         }

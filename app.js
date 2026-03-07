@@ -1,10 +1,28 @@
 const form = document.getElementById("intent-form");
 const intentPresets = document.getElementById("intent-presets");
 const intentGenerateFastBtn = document.getElementById("intent-generate-fast-btn");
+const intentStartDatetimeInput = document.getElementById("intent-start-datetime");
+const manualPlaceInput = document.getElementById("manual-place-input");
+const manualPlaceAddBtn = document.getElementById("manual-place-add-btn");
+const manualMapPinBtn = document.getElementById("manual-map-pin-btn");
+const manualPlaceList = document.getElementById("manual-place-list");
+const manualPlaceSuggestions = document.getElementById("manual-place-suggestions");
 const planSection = document.getElementById("plan-section");
 const planOutput = document.getElementById("plan-output");
+const activityCreateSection = document.getElementById("activity-create-section");
 const createActivityBtn = document.getElementById("create-activity");
+const openActivityCreateBtn = document.getElementById("open-activity-create-btn");
+const backPlanBtn = document.getElementById("back-plan-btn");
 const tonightGroupBtn = document.getElementById("tonight-group-btn");
+const activityLaunchForm = document.getElementById("activity-launch-form");
+const activityCoverInput = document.getElementById("activity-cover-input");
+const activityCoverPreview = document.getElementById("activity-cover-preview");
+const activityThemeSelect = document.getElementById("activity-theme");
+const activityThemeShuffleBtn = document.getElementById("activity-theme-shuffle-btn");
+const activityCalendarSelect = document.getElementById("activity-calendar");
+const activityPrivacySelect = document.getElementById("activity-privacy");
+const activityCalendarPill = document.getElementById("activity-calendar-pill");
+const activityPrivacyPill = document.getElementById("activity-privacy-pill");
 const activitySection = document.getElementById("activity-section");
 const activityOutput = document.getElementById("activity-output");
 const shareBtn = document.getElementById("share-btn");
@@ -109,6 +127,8 @@ const officialFeedList = document.getElementById("official-feed-list");
 const exploreRecommendHint = document.getElementById("explore-recommend-hint");
 const exploreBackFlowBtn = document.getElementById("explore-back-flow-btn");
 const appToast = document.getElementById("app-toast");
+const appTopbar = document.querySelector(".app-topbar");
+const appScreenCompactTitle = document.getElementById("app-screen-title-compact");
 const appScreenTitle = document.getElementById("app-screen-title");
 const appScreenSubtitle = document.getElementById("app-screen-subtitle");
 const flowProgressPill = document.getElementById("flow-progress-pill");
@@ -132,6 +152,11 @@ let googleMarkers = [];
 let googlePath = null;
 let infoWindow = null;
 let googleAuthFailed = false;
+let manualPlacesForIntent = [];
+let manualMapPinMode = false;
+let manualMapClickListener = null;
+let manualSuggestTimer = null;
+let activityCoverDataUrl = "";
 
 let authToken = localStorage.getItem("auth_token") || "";
 let currentUser = null;
@@ -172,49 +197,56 @@ const EXPLORE_PANEL_LABELS = {
   campus: "校园",
 };
 const SCREEN_META = {
-  plan: { title: "首页", subtitle: "主流程" },
-  social: { title: "社交", subtitle: "好友与群聊" },
+  plan: { title: "路线", subtitle: "AI 活动发起器" },
   explore: { title: "发现", subtitle: "活动与灵感" },
-  travel: { title: "旅行", subtitle: "跨国与协同" },
+  social: { title: "聊天", subtitle: "好友与群聊" },
+  account: { title: "账号", subtitle: "账户与安全" },
 };
 const INTENT_PRESETS = {
   tonight_food: {
-    label: "今晚轻松局",
+    label: "今晚 city walk",
     intent: {
       companion: "朋友",
       people: "2",
       budget: "中预算",
       timeSlot: "今天晚上",
-      interest: "美食",
-      area: "新加坡市中心",
+      interest: "city walk",
+      city: "Singapore",
+      country: "Singapore",
+      area: "Singapore, Singapore",
     },
   },
   weekend_citywalk: {
-    label: "周末城市漫游",
+    label: "周末咖啡+展",
     intent: {
-      companion: "同学",
-      people: "3",
+      companion: "朋友",
+      people: "2",
       budget: "中预算",
       timeSlot: "周末半天",
-      interest: "city walk",
-      area: "新加坡市中心",
+      interest: "咖啡+看展",
+      city: "Singapore",
+      country: "Singapore",
+      area: "Singapore, Singapore",
     },
   },
   gallery_date: {
-    label: "展览约会局",
+    label: "情侣约会",
     intent: {
       companion: "情侣",
       people: "2",
       budget: "中预算",
       timeSlot: "周末半天",
-      interest: "看展",
-      area: "新加坡市中心",
+      interest: "夜景+餐厅",
+      city: "Singapore",
+      country: "Singapore",
+      area: "Singapore, Singapore",
     },
   },
 };
 let currentExplorePanel = "official";
 let exploreManualOverrideUntil = 0;
 let toastTimer = null;
+let topbarScrollRaf = 0;
 const ROUTE_JOIN_PAYLOAD_RE = /\[ROUTE_JOIN_PAYLOAD\]([A-Za-z0-9_-]+)\[\/ROUTE_JOIN_PAYLOAD\]/;
 let activeIntentPreset = "tonight_food";
 let flowCoachPrimaryAction = null;
@@ -494,6 +526,28 @@ const api = {
       body: JSON.stringify(payload),
     });
   },
+  getManualPlaces(params = {}) {
+    const query = new URLSearchParams();
+    if (params.q) query.set("q", params.q);
+    if (params.city) query.set("city", params.city);
+    if (params.country) query.set("country", params.country);
+    query.set("limit", String(params.limit || 12));
+    return this.request(`/api/preferences/manual-places?${query.toString()}`);
+  },
+  saveManualPlaces(payload) {
+    return this.request("/api/preferences/manual-places", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  reversePlace(params = {}) {
+    const query = new URLSearchParams();
+    query.set("lat", String(params.lat));
+    query.set("lng", String(params.lng));
+    if (params.city) query.set("city", params.city);
+    if (params.country) query.set("country", params.country);
+    return this.request(`/api/places/reverse?${query.toString()}`);
+  },
   getAggregatedFeed() {
     return this.request("/api/aggregated/feed");
   },
@@ -545,6 +599,11 @@ function setAuth(token, user) {
   }
 
   renderAuthState();
+  if (!currentUser) {
+    renderManualSuggestions([]);
+  } else {
+    loadManualPlaceSuggestions(manualPlaceInput?.value || "").catch(() => {});
+  }
 }
 
 function renderAuthState() {
@@ -603,15 +662,30 @@ function closeComposeCardForElement(element) {
 }
 
 function syncTopbarScreen() {
-  if (!appScreenTitle && !appScreenSubtitle) return;
+  if (!appScreenTitle && !appScreenSubtitle && !appScreenCompactTitle) return;
   const screen = window.location.hash.replace("#", "") || "plan";
   const screenMeta = { ...(SCREEN_META[screen] || SCREEN_META.plan) };
   if (screen === "explore") {
     const panelLabel = EXPLORE_PANEL_LABELS[currentExplorePanel] || "官方聚合";
     screenMeta.subtitle = `发现 · ${panelLabel}`;
   }
+  if (appScreenCompactTitle) appScreenCompactTitle.textContent = screenMeta.title;
   if (appScreenTitle) appScreenTitle.textContent = screenMeta.title;
   if (appScreenSubtitle) appScreenSubtitle.textContent = screenMeta.subtitle;
+}
+
+function syncTopbarTitleMode() {
+  if (!appTopbar) return;
+  const collapsed = window.scrollY > 36;
+  appTopbar.classList.toggle("is-collapsed", collapsed);
+}
+
+function requestTopbarTitleModeSync() {
+  if (topbarScrollRaf) return;
+  topbarScrollRaf = window.requestAnimationFrame(() => {
+    topbarScrollRaf = 0;
+    syncTopbarTitleMode();
+  });
 }
 
 function updateFlowProgressPill() {
@@ -1086,7 +1160,7 @@ function jumpToFlowStep(step) {
   } else if (step === "plan") {
     navigateToScreen("plan", currentPlan ? "plan-section" : "intent-section");
   } else if (step === "launch") {
-    navigateToScreen("plan", currentPlan ? "plan-section" : "intent-section");
+    navigateToScreen("plan", currentPlan ? "activity-create-section" : "intent-section");
   } else if (step === "join") {
     setExplorePanel("events");
     navigateToScreen("explore", "events-section");
@@ -1099,10 +1173,260 @@ function applyIntentToForm(intent) {
     const field = form.elements.namedItem(key);
     if (field && typeof field.value !== "undefined") field.value = value;
   }
+  if (intent.startDate && intent.startTime && intentStartDatetimeInput) {
+    intentStartDatetimeInput.value = `${intent.startDate}T${intent.startTime}`;
+  }
+}
+
+function deriveAreaFromCityCountry(city, country) {
+  const c = String(city || "").trim();
+  const k = String(country || "").trim();
+  return [c, k].filter(Boolean).join(", ");
+}
+
+function normalizeManualPlace(raw = {}) {
+  const lat = Number(raw.lat);
+  const lng = Number(raw.lng);
+  return {
+    name: String(raw.name || raw.point || raw.matchedName || "").trim(),
+    placeId: String(raw.placeId || "").trim(),
+    lat: Number.isFinite(lat) ? lat : null,
+    lng: Number.isFinite(lng) ? lng : null,
+    city: String(raw.city || "").trim(),
+    country: String(raw.country || "").trim(),
+    address: String(raw.address || raw.matchedName || "").trim(),
+    source: String(raw.source || "manual_input").trim(),
+  };
+}
+
+function manualPlaceKey(place = {}) {
+  if (place.placeId) return `pid:${place.placeId.toLowerCase()}`;
+  if (Number.isFinite(place.lat) && Number.isFinite(place.lng)) return `geo:${place.lat.toFixed(5)}|${place.lng.toFixed(5)}`;
+  return `name:${String(place.name || "").trim().toLowerCase()}|${String(place.city || "").trim().toLowerCase()}|${String(place.country || "").trim().toLowerCase()}`;
+}
+
+function upsertManualPlace(place) {
+  const normalized = normalizeManualPlace(place);
+  if (!normalized.name) return false;
+  if (!normalized.city) normalized.city = String(form?.elements?.namedItem("city")?.value || "").trim();
+  if (!normalized.country) normalized.country = String(form?.elements?.namedItem("country")?.value || "").trim();
+  const key = manualPlaceKey(normalized);
+  const idx = manualPlacesForIntent.findIndex((item) => manualPlaceKey(item) === key);
+  if (idx >= 0) {
+    manualPlacesForIntent[idx] = { ...manualPlacesForIntent[idx], ...normalized };
+    return false;
+  }
+  manualPlacesForIntent.push(normalized);
+  return true;
 }
 
 function collectIntentFromForm() {
-  return Object.fromEntries(new FormData(form).entries());
+  const intent = Object.fromEntries(new FormData(form).entries());
+  const dt = String(intent.startDateTime || "").trim();
+  if (dt.includes("T")) {
+    const [datePart, timePart] = dt.split("T");
+    if (datePart) intent.startDate = datePart;
+    if (timePart) intent.startTime = timePart.slice(0, 5);
+  }
+  delete intent.startDateTime;
+
+  intent.companion = String(intent.companion || "朋友").trim() || "朋友";
+  intent.people = String(intent.people || "2").trim() || "2";
+  intent.budget = String(intent.budget || "中预算").trim() || "中预算";
+  intent.timeSlot = String(intent.timeSlot || "今天晚上").trim() || "今天晚上";
+  intent.interest = String(intent.interest || "city walk").trim() || "city walk";
+  intent.city = String(intent.city || "").trim();
+  intent.country = String(intent.country || "").trim();
+  intent.area = String(intent.area || "").trim() || deriveAreaFromCityCountry(intent.city, intent.country);
+  intent.endDate = String(intent.endDate || "").trim();
+  intent.fromCountry = String(intent.fromCountry || "").trim();
+  intent.startDate = String(intent.startDate || "").trim();
+  intent.startTime = String(intent.startTime || "").trim();
+
+  if (manualPlacesForIntent.length) {
+    intent.seedPoints = manualPlacesForIntent.map((p) => p.name).filter(Boolean);
+    intent.manualPlaces = manualPlacesForIntent.map((p) => ({
+      name: p.name,
+      placeId: p.placeId || "",
+      lat: Number.isFinite(p.lat) ? p.lat : null,
+      lng: Number.isFinite(p.lng) ? p.lng : null,
+      city: p.city || intent.city,
+      country: p.country || intent.country,
+      address: p.address || "",
+      source: p.source || "manual_input",
+    }));
+  }
+  return intent;
+}
+
+function renderManualPlaces() {
+  if (!manualPlaceList) return;
+  if (!manualPlacesForIntent.length) {
+    manualPlaceList.innerHTML = `<span class="meta">还没有手动地点，可输入或点地图添加。</span>`;
+    return;
+  }
+  manualPlaceList.innerHTML = manualPlacesForIntent
+    .map((place, index) => {
+      const location = [place.city, place.country].filter(Boolean).join(", ");
+      const label = location ? `${place.name} · ${location}` : place.name;
+      return `<button type="button" class="intent-manual-chip remove" data-manual-remove="${index}" title="移除">${escapeHtml(label)} ×</button>`;
+    })
+    .join("");
+}
+
+function renderManualSuggestions(places = []) {
+  if (!manualPlaceSuggestions) return;
+  if (!places.length) {
+    manualPlaceSuggestions.innerHTML = "";
+    return;
+  }
+  manualPlaceSuggestions.innerHTML = places
+    .map((place, index) => {
+      const location = [place.city, place.country].filter(Boolean).join(", ");
+      const label = location ? `${place.name} · ${location}` : place.name;
+      return `<button type="button" class="intent-manual-chip" data-manual-suggest="${index}">${escapeHtml(label)}</button>`;
+    })
+    .join("");
+}
+
+async function saveManualPlacesForAccount(places = []) {
+  if (!currentUser || !places.length) return;
+  const city = String(form?.elements?.namedItem("city")?.value || "").trim();
+  const country = String(form?.elements?.namedItem("country")?.value || "").trim();
+  try {
+    await api.saveManualPlaces({
+      city,
+      country,
+      places,
+    });
+  } catch (_err) {
+    // Ignore save failures and keep local editing experience.
+  }
+}
+
+async function loadManualPlaceSuggestions(q = "") {
+  if (!currentUser) {
+    renderManualSuggestions([]);
+    return;
+  }
+  const city = String(form?.elements?.namedItem("city")?.value || "").trim();
+  const country = String(form?.elements?.namedItem("country")?.value || "").trim();
+  try {
+    const result = await api.getManualPlaces({
+      q: String(q || "").trim(),
+      city,
+      country,
+      limit: 12,
+    });
+    const dedupKeys = new Set(manualPlacesForIntent.map((item) => manualPlaceKey(item)));
+    const suggestions = Array.isArray(result)
+      ? result
+          .map((item) => normalizeManualPlace(item))
+          .filter((item) => item.name && !dedupKeys.has(manualPlaceKey(item)))
+          .slice(0, 8)
+      : [];
+    renderManualSuggestions(suggestions);
+    if (manualPlaceSuggestions) {
+      manualPlaceSuggestions.dataset.suggestPayload = JSON.stringify(suggestions);
+    }
+  } catch (_err) {
+    renderManualSuggestions([]);
+  }
+}
+
+function parseManualSuggestionsFromDataset() {
+  if (!manualPlaceSuggestions) return [];
+  try {
+    const parsed = JSON.parse(manualPlaceSuggestions.dataset.suggestPayload || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_err) {
+    return [];
+  }
+}
+
+async function addManualPlaceFromTextInput() {
+  const raw = String(manualPlaceInput?.value || "").trim();
+  if (!raw) return;
+  const added = upsertManualPlace({
+    name: raw,
+    city: String(form?.elements?.namedItem("city")?.value || "").trim(),
+    country: String(form?.elements?.namedItem("country")?.value || "").trim(),
+    source: "manual_text",
+  });
+  renderManualPlaces();
+  manualPlaceInput.value = "";
+  if (added) {
+    await saveManualPlacesForAccount([manualPlacesForIntent[manualPlacesForIntent.length - 1]]);
+    showToast("已添加手动地点");
+  }
+  await loadManualPlaceSuggestions("");
+}
+
+async function resolveAndAddManualMapPoint(lat, lng) {
+  const city = String(form?.elements?.namedItem("city")?.value || "").trim();
+  const country = String(form?.elements?.namedItem("country")?.value || "").trim();
+  let place = null;
+  try {
+    const result = await api.reversePlace({ lat, lng, city, country });
+    place = normalizeManualPlace({
+      name: result.point || result.matchedName || `地图标点 ${lat.toFixed(4)}, ${lng.toFixed(4)}`,
+      placeId: result.placeId || "",
+      lat: result.lat,
+      lng: result.lng,
+      city: result.city || city,
+      country: result.country || country,
+      address: result.matchedName || "",
+      source: "map_pin",
+    });
+  } catch (_err) {
+    place = normalizeManualPlace({
+      name: `地图标点 ${lat.toFixed(4)}, ${lng.toFixed(4)}`,
+      lat,
+      lng,
+      city,
+      country,
+      source: "map_pin",
+    });
+  }
+  const added = upsertManualPlace(place);
+  renderManualPlaces();
+  if (added) {
+    await saveManualPlacesForAccount([place]);
+  }
+  showToast(`已添加：${place.name}`);
+}
+
+async function toggleManualMapPinMode() {
+  if (!manualMapPinBtn) return;
+  if (!mapConfig.enabled || !mapConfig.apiKey) {
+    showToast("Google Maps 未配置，无法地图标点。", "error");
+    return;
+  }
+  try {
+    await ensureMapReady();
+  } catch (err) {
+    showToast(`地图不可用：${err.message}`, "error");
+    return;
+  }
+
+  manualMapPinMode = !manualMapPinMode;
+  manualMapPinBtn.classList.toggle("active", manualMapPinMode);
+  manualMapPinBtn.textContent = manualMapPinMode ? "标点中（点地图）" : "地图标点";
+
+  if (manualMapClickListener) {
+    manualMapClickListener.remove();
+    manualMapClickListener = null;
+  }
+  if (!manualMapPinMode || !googleMap) return;
+
+  manualMapClickListener = googleMap.addListener("click", async (event) => {
+    if (!manualMapPinMode) return;
+    const lat = Number(event?.latLng?.lat?.());
+    const lng = Number(event?.latLng?.lng?.());
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    await resolveAndAddManualMapPoint(lat, lng);
+  });
+  showToast("地图标点已开启，点击地图即可添加地点。");
 }
 
 function setActiveIntentPreset(presetKey) {
@@ -1149,7 +1473,9 @@ function buildIntentFromSeed(seed = {}) {
     budget: "中预算",
     timeSlot: "周末半天",
     interest: pickInterestFromTags([tagPool]),
-    area: areaFromCity(seed.city || seed.toCity || ""),
+    city: seed.city || seed.toCity || "Singapore",
+    country: seed.country || seed.toCountry || "Singapore",
+    area: areaFromCity(seed.city || seed.toCity || "Singapore", seed.country || seed.toCountry || "Singapore"),
   };
 }
 
@@ -1225,8 +1551,8 @@ function buildTonightDiscussionTemplate(plan) {
 交通建议：`;
 }
 
-async function createAndRenderActivityFromPlan(plan, focusPlanScreen = true) {
-  currentActivity = await createActivity(plan);
+async function createAndRenderActivityFromPlan(plan, focusPlanScreen = true, launchConfig = null) {
+  currentActivity = await createActivity(plan, launchConfig);
   currentActivity.link = `${location.origin}${location.pathname}?join=${currentActivity.joinToken}`;
   renderActivity(currentActivity);
   activitySection.classList.remove("hidden");
@@ -1876,11 +2202,11 @@ function pickInterestFromTags(tags = []) {
   return "city walk";
 }
 
-function areaFromCity(city = "") {
-  const lower = String(city).toLowerCase();
-  if (lower.includes("ntu")) return "NTU附近";
-  if (lower.includes("east")) return "东海岸";
-  return "新加坡市中心";
+function areaFromCity(city = "", country = "") {
+  const c = String(city || "").trim();
+  const k = String(country || "").trim();
+  if (c || k) return [c, k || "Singapore"].filter(Boolean).join(", ");
+  return "Singapore, Singapore";
 }
 
 function renderInspirations(posts) {
@@ -2179,6 +2505,18 @@ function renderPlan(plan) {
   const routeSummary = plan.routeSummary
     ? `整段路径：约 ${plan.routeSummary.distanceKm || "-"} km / ${plan.routeSummary.durationMin || "-"} 分钟`
     : "整段路径：暂无官方路线时长";
+  const narrative = plan.narrative || {};
+  const narrativeInsights = Array.isArray(narrative.searchInsights) ? narrative.searchInsights.slice(0, 3) : [];
+  const narrativeHtml =
+    narrative.hook || narrative.vibe || narrativeInsights.length
+      ? `
+      <article class="travel-item">
+        ${narrative.hook ? `<div class="travel-head"><strong>${escapeHtml(narrative.hook)}</strong><span>${narrative.llmEnhanced ? "LLM增强" : "推荐增强"}</span></div>` : ""}
+        ${narrative.vibe ? `<div class="travel-meta">${escapeHtml(narrative.vibe)}</div>` : ""}
+        ${narrativeInsights.length ? `<div class="travel-meta">${narrativeInsights.map((line) => `• ${escapeHtml(line)}`).join("<br/>")}</div>` : ""}
+      </article>
+    `
+      : "";
   const routeHtml = plan.route
     .map((step) => {
       const mapsUrl = createGoogleMapsSearchUrl(step.matchedName || step.point);
@@ -2246,10 +2584,12 @@ function renderPlan(plan) {
     <p class="meta">预算估计：${plan.budgetEstimate}</p>
     <p class="meta">地点校验：${validation} | 来源：${realtimeTag}${multiDayTag}</p>
     <p class="meta">${routeSummary}</p>
+    ${narrativeHtml}
     ${masterBooking}
     <div class="travel-list">${routeHtml}</div>
     <p class="why">${plan.reason}</p>
   `;
+  syncActivityLaunchFormFromPlan(plan, true);
   markFlowStep("plan", plan.title || "路线已生成");
   updateChatRouteContext();
 }
@@ -2601,16 +2941,161 @@ async function renderDefaultGlobalMap() {
   }
 }
 
-function createActivity(plan) {
-  return api.createActivity(plan);
+const ACTIVITY_THEME_PRESETS = {
+  量子:
+    "radial-gradient(circle at 20% 22%, rgba(183, 250, 255, 0.62) 0%, transparent 45%), linear-gradient(130deg, #56dce3 0%, #5ec2ff 34%, #9275ff 100%)",
+  霓虹夜游:
+    "radial-gradient(circle at 15% 18%, rgba(255, 212, 165, 0.56) 0%, transparent 42%), linear-gradient(135deg, #2f0e86 0%, #5d22b2 48%, #2a6ab8 100%)",
+  城市漫游:
+    "radial-gradient(circle at 80% 20%, rgba(214, 245, 255, 0.5) 0%, transparent 40%), linear-gradient(135deg, #2d5f89 0%, #1c85a8 45%, #75c8d8 100%)",
+  露营野餐:
+    "radial-gradient(circle at 16% 18%, rgba(226, 255, 183, 0.55) 0%, transparent 45%), linear-gradient(135deg, #2f7144 0%, #4f9a5f 45%, #8ad0a7 100%)",
+};
+
+function formatDateTimeLocalValue(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return "";
+  const y = date.getFullYear();
+  const m = `${date.getMonth() + 1}`.padStart(2, "0");
+  const d = `${date.getDate()}`.padStart(2, "0");
+  const hh = `${date.getHours()}`.padStart(2, "0");
+  const mm = `${date.getMinutes()}`.padStart(2, "0");
+  return `${y}-${m}-${d}T${hh}:${mm}`;
+}
+
+function parseStopDateTime(stop, fallbackDate) {
+  const date = String(stop?.date || "").trim();
+  const time = String(stop?.time || "").trim() || "19:30";
+  if (!date) return fallbackDate;
+  const parsed = new Date(`${date}T${time}`);
+  if (Number.isNaN(parsed.getTime())) return fallbackDate;
+  return parsed;
+}
+
+function buildLaunchDefaultsFromPlan(plan) {
+  const now = new Date();
+  const fallbackStart = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+  const fallbackEnd = new Date(fallbackStart.getTime() + 60 * 60 * 1000);
+  const firstStop = Array.isArray(plan?.route) && plan.route.length ? plan.route[0] : null;
+  const lastStop = Array.isArray(plan?.route) && plan.route.length ? plan.route[plan.route.length - 1] : null;
+  const startDate = parseStopDateTime(firstStop, fallbackStart);
+  let endDate = parseStopDateTime(lastStop, new Date(startDate.getTime() + 60 * 60 * 1000));
+  if (endDate <= startDate) endDate = new Date(startDate.getTime() + 60 * 60 * 1000);
+  const title = String(plan?.title || "").trim() || "活动名称";
+  return {
+    title,
+    startAt: formatDateTimeLocalValue(startDate),
+    endAt: formatDateTimeLocalValue(endDate),
+    venueName: String(firstStop?.point || firstStop?.matchedName || "").trim(),
+    description: String(plan?.reason || "").trim(),
+    ticketPrice: "免费",
+    attendeeLimit: 50,
+    timezone: "GMT+08:00 新加坡",
+    calendar: "个人日历",
+    privacy: "私密",
+    requiresApproval: false,
+    theme: "量子",
+  };
+}
+
+function applyActivityCoverPreview(theme = "") {
+  if (!activityCoverPreview) return;
+  const selectedTheme = String(theme || activityThemeSelect?.value || "量子").trim() || "量子";
+  const labelStrong = activityCoverPreview.querySelector("strong");
+  const labelSpan = activityCoverPreview.querySelector("span");
+  if (labelStrong) labelStrong.textContent = selectedTheme;
+  if (labelSpan) labelSpan.textContent = "Route Launch";
+  if (activityCoverDataUrl) return;
+  const background = ACTIVITY_THEME_PRESETS[selectedTheme] || ACTIVITY_THEME_PRESETS.量子;
+  activityCoverPreview.style.background = background;
+}
+
+function renderActivityCoverFromDataUrl(dataUrl = "") {
+  if (!activityCoverPreview) return;
+  const safeUrl = String(dataUrl || "").trim();
+  if (!safeUrl) {
+    activityCoverDataUrl = "";
+    activityCoverPreview.innerHTML = `<strong>${escapeHtml(activityThemeSelect?.value || "TripWeaver")}</strong><span>Route Launch</span>`;
+    applyActivityCoverPreview(activityThemeSelect?.value || "量子");
+    return;
+  }
+  activityCoverDataUrl = safeUrl;
+  activityCoverPreview.innerHTML = `<img src="${safeUrl}" alt="活动封面预览" />`;
+}
+
+function syncActivityLaunchPills() {
+  if (activityCalendarPill && activityCalendarSelect) activityCalendarPill.textContent = activityCalendarSelect.value || "个人日历";
+  if (activityPrivacyPill && activityPrivacySelect) activityPrivacyPill.textContent = activityPrivacySelect.value || "私密";
+}
+
+function syncActivityLaunchFormFromPlan(plan, overwrite = true) {
+  if (!activityLaunchForm || !plan) return;
+  const defaults = buildLaunchDefaultsFromPlan(plan);
+  Object.entries(defaults).forEach(([key, value]) => {
+    const field = activityLaunchForm.elements.namedItem(key);
+    if (!field) return;
+    if (field instanceof HTMLInputElement && field.type === "checkbox") {
+      if (overwrite) field.checked = Boolean(value);
+      return;
+    }
+    if (overwrite || !String(field.value || "").trim()) {
+      field.value = value;
+    }
+  });
+  syncActivityLaunchPills();
+  applyActivityCoverPreview(defaults.theme);
+}
+
+function collectLaunchConfigFromForm(plan) {
+  const defaults = buildLaunchDefaultsFromPlan(plan);
+  if (!activityLaunchForm) return defaults;
+  const data = Object.fromEntries(new FormData(activityLaunchForm).entries());
+  const startRaw = String(data.startAt || defaults.startAt || "").trim();
+  const endRaw = String(data.endAt || defaults.endAt || "").trim();
+  const parsedStart = startRaw ? new Date(startRaw) : null;
+  const parsedEnd = endRaw ? new Date(endRaw) : null;
+  const startAt = parsedStart && !Number.isNaN(parsedStart.getTime()) ? parsedStart.toISOString() : new Date().toISOString();
+  let endAt = parsedEnd && !Number.isNaN(parsedEnd.getTime()) ? parsedEnd.toISOString() : new Date(new Date(startAt).getTime() + 60 * 60 * 1000).toISOString();
+  if (new Date(endAt) <= new Date(startAt)) {
+    endAt = new Date(new Date(startAt).getTime() + 60 * 60 * 1000).toISOString();
+  }
+  const limitRaw = Number(data.attendeeLimit);
+  return {
+    title: String(data.title || defaults.title || "").trim() || defaults.title,
+    calendar: String(data.calendar || defaults.calendar || "个人日历").trim(),
+    privacy: String(data.privacy || defaults.privacy || "私密").trim(),
+    timezone: String(data.timezone || defaults.timezone || "GMT+08:00 新加坡").trim(),
+    startAt,
+    endAt,
+    venueName: String(data.venueName || defaults.venueName || "").trim(),
+    description: String(data.description || defaults.description || "").trim(),
+    ticketPrice: String(data.ticketPrice || defaults.ticketPrice || "免费").trim() || "免费",
+    requiresApproval: Boolean(activityLaunchForm.querySelector("#activity-require-approval")?.checked),
+    attendeeLimit: Number.isFinite(limitRaw) ? Math.max(1, Math.min(5000, Math.round(limitRaw))) : 50,
+    theme: String(data.theme || defaults.theme || "量子").trim(),
+    coverImage: activityCoverDataUrl || "",
+  };
+}
+
+function createActivity(plan, launchConfig = null) {
+  const payload = {
+    ...plan,
+    launchConfig: launchConfig || collectLaunchConfigFromForm(plan),
+  };
+  return api.createActivity(payload);
 }
 
 function renderActivity(activity) {
   activityOutput.innerHTML = `
     <h3>${activity.title}</h3>
     <p class="meta">活动编号：${activity.code}</p>
+    <p class="meta">${escapeHtml(activity.calendar || "个人日历")} · ${escapeHtml(activity.privacy || "私密")} · ${escapeHtml(
+      activity.timezone || "GMT+08:00 新加坡",
+    )}</p>
+    <p>时间：${new Date(activity.startAt).toLocaleString()} - ${new Date(activity.endAt).toLocaleString()}</p>
+    <p>地点：${escapeHtml(activity.venueName || "待定集合点")}</p>
     <p>行程：${activity.schedule}</p>
-    <p>${activity.members}</p>
+    <p>规则：${escapeHtml(activity.ticketPriceLabel || "免费")} · ${activity.requiresApproval ? "需审核" : "免审核"} · 限 ${Number(activity.attendeeLimit || 50)} 人</p>
+    <p>${escapeHtml(activity.description || activity.members || "")}</p>
     <p>分享链接：<a href="${activity.link}" target="_blank" rel="noreferrer">${activity.link}</a></p>
   `;
   markFlowStep("launch", activity.code ? `活动 ${activity.code}` : "活动已发起");
@@ -3645,6 +4130,8 @@ if (exploreBackFlowBtn) {
 window.addEventListener("hashchange", () => {
   syncExploreFloatingButton();
   syncTopbarScreen();
+  requestTopbarTitleModeSync();
+  setTimeout(requestTopbarTitleModeSync, 70);
   updateFlowCoach();
   const screen = window.location.hash.replace("#", "") || "plan";
   if (screen === "explore") {
@@ -3654,6 +4141,9 @@ window.addEventListener("hashchange", () => {
     }
   }
 });
+
+window.addEventListener("scroll", requestTopbarTitleModeSync, { passive: true });
+window.addEventListener("resize", requestTopbarTitleModeSync);
 
 if (flowGoDiscoverBtn) flowGoDiscoverBtn.addEventListener("click", () => jumpToFlowStep("discover"));
 if (flowGoMatchBtn) flowGoMatchBtn.addEventListener("click", () => jumpToFlowStep("match"));
@@ -3692,6 +4182,73 @@ if (intentPresets) {
     if (!preset || !INTENT_PRESETS[preset]) return;
     applyIntentPreset(preset);
   });
+}
+
+if (manualPlaceInput) {
+  manualPlaceInput.addEventListener("keydown", async (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      await addManualPlaceFromTextInput();
+      return;
+    }
+    if (manualSuggestTimer) clearTimeout(manualSuggestTimer);
+    manualSuggestTimer = setTimeout(() => {
+      loadManualPlaceSuggestions(manualPlaceInput.value).catch(() => {});
+    }, 180);
+  });
+  manualPlaceInput.addEventListener("input", () => {
+    if (manualSuggestTimer) clearTimeout(manualSuggestTimer);
+    manualSuggestTimer = setTimeout(() => {
+      loadManualPlaceSuggestions(manualPlaceInput.value).catch(() => {});
+    }, 180);
+  });
+}
+
+if (manualPlaceAddBtn) {
+  manualPlaceAddBtn.addEventListener("click", async () => {
+    await addManualPlaceFromTextInput();
+  });
+}
+
+if (manualMapPinBtn) {
+  manualMapPinBtn.addEventListener("click", async () => {
+    await toggleManualMapPinMode();
+  });
+}
+
+if (manualPlaceList) {
+  manualPlaceList.addEventListener("click", async (e) => {
+    const btn = e.target.closest("[data-manual-remove]");
+    if (!btn) return;
+    const idx = Number(btn.getAttribute("data-manual-remove"));
+    if (!Number.isInteger(idx) || idx < 0 || idx >= manualPlacesForIntent.length) return;
+    manualPlacesForIntent.splice(idx, 1);
+    renderManualPlaces();
+    await loadManualPlaceSuggestions(manualPlaceInput?.value || "");
+  });
+}
+
+if (manualPlaceSuggestions) {
+  manualPlaceSuggestions.addEventListener("click", async (e) => {
+    const btn = e.target.closest("[data-manual-suggest]");
+    if (!btn) return;
+    const idx = Number(btn.getAttribute("data-manual-suggest"));
+    const suggestions = parseManualSuggestionsFromDataset();
+    const pick = suggestions[idx];
+    if (!pick) return;
+    const added = upsertManualPlace(pick);
+    renderManualPlaces();
+    if (added) {
+      await saveManualPlacesForAccount([pick]);
+    }
+    await loadManualPlaceSuggestions("");
+  });
+}
+
+if (intentStartDatetimeInput && !intentStartDatetimeInput.value) {
+  const now = new Date();
+  now.setHours(now.getHours() + 2);
+  intentStartDatetimeInput.value = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 }
 
 if (intentGenerateFastBtn) {
@@ -3843,14 +4400,81 @@ form.addEventListener("submit", async (e) => {
   }
 });
 
-createActivityBtn.addEventListener("click", async () => {
-  if (!currentPlan) return;
-  try {
-    await createAndRenderActivityFromPlan(currentPlan, true);
-  } catch (err) {
-    alert(`发起失败: ${err.message}`);
-  }
-});
+if (openActivityCreateBtn) {
+  openActivityCreateBtn.addEventListener("click", () => {
+    if (!currentPlan) {
+      navigateToScreen("plan", "intent-section");
+      return;
+    }
+    navigateToScreen("plan", "activity-create-section");
+  });
+}
+
+if (backPlanBtn) {
+  backPlanBtn.addEventListener("click", () => {
+    navigateToScreen("plan", "plan-section");
+  });
+}
+
+if (activityLaunchForm) {
+  activityLaunchForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!currentPlan) return;
+    try {
+      const launchConfig = collectLaunchConfigFromForm(currentPlan);
+      await createAndRenderActivityFromPlan(currentPlan, true, launchConfig);
+      syncActivityLaunchPills();
+    } catch (err) {
+      alert(`发起失败: ${err.message}`);
+    }
+  });
+} else if (createActivityBtn) {
+  createActivityBtn.addEventListener("click", async () => {
+    if (!currentPlan) return;
+    try {
+      await createAndRenderActivityFromPlan(currentPlan, true);
+    } catch (err) {
+      alert(`发起失败: ${err.message}`);
+    }
+  });
+}
+
+if (activityThemeSelect) {
+  activityThemeSelect.addEventListener("change", () => {
+    applyActivityCoverPreview(activityThemeSelect.value);
+  });
+}
+
+if (activityThemeShuffleBtn && activityThemeSelect) {
+  activityThemeShuffleBtn.addEventListener("click", () => {
+    const options = Array.from(activityThemeSelect.options).map((option) => option.value);
+    if (!options.length) return;
+    const pool = options.filter((name) => name !== activityThemeSelect.value);
+    const next = pool.length ? pool[Math.floor(Math.random() * pool.length)] : options[0];
+    activityThemeSelect.value = next;
+    applyActivityCoverPreview(next);
+  });
+}
+
+if (activityCoverInput) {
+  activityCoverInput.addEventListener("change", () => {
+    const file = activityCoverInput.files?.[0];
+    if (!file) {
+      renderActivityCoverFromDataUrl("");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      renderActivityCoverFromDataUrl(String(reader.result || ""));
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+if (activityCalendarSelect || activityPrivacySelect) {
+  activityCalendarSelect?.addEventListener("change", syncActivityLaunchPills);
+  activityPrivacySelect?.addEventListener("change", syncActivityLaunchPills);
+}
 
 if (tonightGroupBtn) {
   tonightGroupBtn.addEventListener("click", async () => {
@@ -3918,6 +4542,7 @@ async function restoreSession() {
     await loadAggregatedFeed().catch(() => {});
     await loadCollabTrips();
     await loadPersonalizedRecommendations({ force: true });
+    await loadManualPlaceSuggestions(manualPlaceInput?.value || "");
     connectChatSocket();
   } catch (_err) {
     setAuth("", null);
@@ -3942,6 +4567,7 @@ async function boot() {
   await loadCollabTrips();
   await refreshEvents();
   await renderDefaultGlobalMap();
+  renderManualPlaces();
   renderFlowState();
 }
 
@@ -3951,6 +4577,9 @@ maybeApplyRecommendedExplorePanel(true);
 renderFlowState();
 syncExploreFloatingButton();
 syncTopbarScreen();
+syncTopbarTitleMode();
+syncActivityLaunchPills();
+applyActivityCoverPreview(activityThemeSelect?.value || "量子");
 applyIntentPreset(activeIntentPreset, true);
 updateFlowCoach();
 boot();

@@ -3,6 +3,7 @@ import MapKit
 
 struct PlaceMapView: View {
     let route: [RouteStop]
+    var height: CGFloat = 260
 
     @State private var position: MapCameraPosition = .automatic
 
@@ -34,7 +35,7 @@ struct PlaceMapView: View {
                 .background(Color.white.opacity(0.88), in: Capsule())
                 .padding(10)
         }
-        .frame(height: 260)
+        .frame(height: height)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 16, style: .continuous)

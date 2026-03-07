@@ -3,41 +3,199 @@ import SwiftUI
 struct ExploreView: View {
     @EnvironmentObject private var session: SessionStore
 
-    @State private var q = "ramen"
+    @State private var q = "聚餐"
     @State private var city = "Tokyo"
     @State private var country = "Japan"
     @State private var category = "restaurant"
+
     @State private var places: [DiscoveryPlace] = []
+    @State private var upcomingRoutes: [DiscoveryRouteEvent] = []
+    @State private var interestGroups: [InterestGroup] = []
+    @State private var campusGroups: [CampusGroup] = []
+
     @State private var loading = false
     @State private var message = ""
 
-    private let categoryChips = ["restaurant", "attraction", "hotel", "museum", "cafe"]
+    private let categoryChips = ["restaurant", "museum", "park", "campground", "board game cafe", "cafe", "attraction", "hotel"]
 
     var body: some View {
         NavigationStack {
             ZStack {
                 AppGradientBackground()
 
-                ScrollView {
-                    VStack(spacing: 12) {
-                        queryCard
-                        actionCard
+                AppPage {
+                    discoverHeaderCard
+                    upcomingRoutesCard
+                    groupChatsCard
+                    queryCard
+                    actionCard
 
-                        if !places.isEmpty {
-                            mapCard
-                            placesCard
-                        }
+                    if !places.isEmpty {
+                        mapCard
+                        placesCard
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
                 }
             }
-            .navigationTitle("附近发现")
+            .navigationTitle("发现")
             .toolbarTitleDisplayMode(.inline)
+            .toolbarBackground(.visible, for: .navigationBar)
             .overlay(alignment: .topTrailing) {
                 if loading { ProgressView().padding(10) }
             }
+            .task {
+                await refreshDiscoverFeed()
+            }
         }
+    }
+
+    private var discoverHeaderCard: some View {
+        TWCard {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Discover")
+                    .font(.title3.weight(.bold))
+                Text("发现活动 -> 找到人 -> 发起路线")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 8) {
+                    field("城市", text: $city)
+                    field("国家", text: $country)
+                }
+
+                Button("刷新发现流") {
+                    Task { await refreshDiscoverFeed() }
+                }
+                .buttonStyle(TWSecondaryButtonStyle())
+            }
+        }
+    }
+
+    private var upcomingRoutesCard: some View {
+        TWCard {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("即将开始的路线")
+                        .font(.headline)
+                    Spacer()
+                    Text("\(upcomingRoutes.count) 条")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if upcomingRoutes.isEmpty {
+                    Text("暂无即将开始的路线，你可以先在路线页发起一个活动。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(upcomingRoutes.prefix(8)) { event in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(event.title)
+                                .font(.subheadline.weight(.semibold))
+                            HStack(spacing: 8) {
+                                Label(formatDateTime(event.startAt), systemImage: "calendar")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Label(event.venueName ?? "待定地点", systemImage: "mappin.and.ellipse")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Text("\(event.city ?? "") \(event.country ?? "")")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 9)
+                        .background(Color.white.opacity(0.82), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                    }
+                }
+            }
+        }
+    }
+
+    private var groupChatsCard: some View {
+        TWCard {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("群聊与社群")
+                    .font(.headline)
+
+                if interestGroups.isEmpty && campusGroups.isEmpty {
+                    Text("暂无可用群组，先在聊天页创建一个兴趣群。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
+                ForEach(interestGroups.prefix(6)) { group in
+                    NavigationLink {
+                        CommunityChatView(
+                            communityId: group.id,
+                            communityName: group.name,
+                            subtitle: "\(group.interest ?? "兴趣") · \(group.city ?? "") \(group.country ?? "")",
+                            type: .interest,
+                            initiallyMember: isCurrentUserMember(group.members)
+                        )
+                    } label: {
+                        groupRow(
+                            title: group.name,
+                            subtitle: "\(group.interest ?? "兴趣") · \(group.city ?? "") \(group.country ?? "")",
+                            nextTime: group.nextMeetupAt,
+                            badge: "同好群"
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                ForEach(campusGroups.prefix(4)) { group in
+                    NavigationLink {
+                        CommunityChatView(
+                            communityId: group.id,
+                            communityName: group.name,
+                            subtitle: group.campusName ?? "校园群",
+                            type: .campus,
+                            initiallyMember: isCurrentUserMember(group.members)
+                        )
+                    } label: {
+                        groupRow(
+                            title: group.name,
+                            subtitle: group.campusName ?? "校园群",
+                            nextTime: nil,
+                            badge: "校园"
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private func groupRow(title: String, subtitle: String, nextTime: String?, badge: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 7) {
+                    Text(title)
+                        .font(.subheadline.weight(.semibold))
+                    Text(badge)
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(AppTheme.brand.opacity(0.16), in: Capsule())
+                        .foregroundStyle(AppTheme.brandDeep)
+                }
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if let nextTime, !nextTime.isEmpty {
+                    Text("下次活动：\(formatDateTime(nextTime))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .background(Color.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
     }
 
     private var queryCard: some View {
@@ -56,14 +214,22 @@ struct ExploreView: View {
                         category = "attraction"
                         q = "weekend"
                     }
+                    quickChip("桌游夜") {
+                        city = "Singapore"
+                        country = "Singapore"
+                        category = "board game cafe"
+                        q = "桌游"
+                    }
+                    quickChip("野餐公园") {
+                        city = "Tokyo"
+                        country = "Japan"
+                        category = "park"
+                        q = "picnic"
+                    }
                     Spacer(minLength: 0)
                 }
 
                 field("关键词", text: $q)
-                HStack(spacing: 8) {
-                    field("城市", text: $city)
-                    field("国家", text: $country)
-                }
 
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 7) {
@@ -188,6 +354,70 @@ struct ExploreView: View {
         .buttonStyle(.plain)
     }
 
+    private func refreshDiscoverFeed() async {
+        loading = true
+        defer { loading = false }
+        await loadUpcomingRoutes()
+        await loadInterestGroups()
+        await loadCampusGroups()
+    }
+
+    private func loadUpcomingRoutes() async {
+        do {
+            var comps = URLComponents(string: "/api/discovery/upcoming-routes")
+            comps?.queryItems = [
+                URLQueryItem(name: "city", value: city),
+                URLQueryItem(name: "country", value: country),
+                URLQueryItem(name: "limit", value: "8"),
+            ]
+            let path = comps?.string ?? "/api/discovery/upcoming-routes"
+            let result: [DiscoveryRouteEvent] = try await APIClient.request(
+                baseURL: session.apiBaseURL,
+                path: path,
+                token: session.token
+            )
+            upcomingRoutes = result
+        } catch {
+            message = error.localizedDescription
+        }
+    }
+
+    private func loadInterestGroups() async {
+        do {
+            var comps = URLComponents(string: "/api/interest/groups")
+            comps?.queryItems = [
+                URLQueryItem(name: "city", value: city),
+                URLQueryItem(name: "country", value: country),
+            ]
+            let path = comps?.string ?? "/api/interest/groups"
+            let result: [InterestGroup] = try await APIClient.request(
+                baseURL: session.apiBaseURL,
+                path: path,
+                token: session.token
+            )
+            interestGroups = result
+        } catch {
+            message = error.localizedDescription
+        }
+    }
+
+    private func loadCampusGroups() async {
+        guard !session.token.isEmpty else {
+            campusGroups = []
+            return
+        }
+        do {
+            let result: [CampusGroup] = try await APIClient.request(
+                baseURL: session.apiBaseURL,
+                path: "/api/campus/groups",
+                token: session.token
+            )
+            campusGroups = result
+        } catch {
+            campusGroups = []
+        }
+    }
+
     private func searchPlaces() async {
         loading = true
         defer { loading = false }
@@ -239,5 +469,19 @@ struct ExploreView: View {
         } catch {
             message = error.localizedDescription
         }
+    }
+
+    private func formatDateTime(_ iso: String?) -> String {
+        guard let iso, !iso.isEmpty else { return "时间待定" }
+        let inFmt = ISO8601DateFormatter()
+        guard let date = inFmt.date(from: iso) else { return iso }
+        let outFmt = DateFormatter()
+        outFmt.dateFormat = "MM-dd HH:mm"
+        return outFmt.string(from: date)
+    }
+
+    private func isCurrentUserMember(_ members: [AuthUser]?) -> Bool {
+        guard let members, let myId = session.user?.id, !myId.isEmpty else { return false }
+        return members.contains(where: { $0.id == myId })
     }
 }
