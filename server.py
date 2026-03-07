@@ -5,8 +5,10 @@ import os
 import random
 import re
 import sqlite3
+import smtplib
 import uuid
 from datetime import date, datetime, timedelta, timezone
+from email.message import EmailMessage
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -33,6 +35,15 @@ GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 OPEN_PUBLISH_KEY = os.getenv("OPEN_PUBLISH_KEY", "demo_platform_key")
+SMTP_HOST = os.getenv("SMTP_HOST", "").strip()
+SMTP_PORT_RAW = os.getenv("SMTP_PORT", "587").strip()
+SMTP_USER = os.getenv("SMTP_USER", "").strip()
+SMTP_PASS = os.getenv("SMTP_PASS", "").strip()
+SMTP_FROM = os.getenv("SMTP_FROM", "").strip()
+SMTP_USE_TLS_RAW = os.getenv("SMTP_USE_TLS", "true").strip()
+SMTP_USE_SSL_RAW = os.getenv("SMTP_USE_SSL", "false").strip()
+AUTH_CODE_DEBUG_RAW = os.getenv("AUTH_CODE_DEBUG", "true").strip()
+AUTH_CODE_SENDER_NAME = os.getenv("AUTH_CODE_SENDER_NAME", "TripWeaver").strip() or "TripWeaver"
 
 EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 PHONE_RE = re.compile(r"^\+?[0-9][0-9\-\s]{5,18}$")
@@ -168,6 +179,12 @@ def parse_bool(value: Any, default: bool = False) -> bool:
     if raw in {"0", "false", "no", "n", "off", "否", "关闭", "关"}:
         return False
     return default
+
+
+SMTP_PORT = clamp(to_int(SMTP_PORT_RAW, 587), 1, 65535)
+SMTP_USE_TLS = parse_bool(SMTP_USE_TLS_RAW, True)
+SMTP_USE_SSL = parse_bool(SMTP_USE_SSL_RAW, False)
+AUTH_CODE_DEBUG = parse_bool(AUTH_CODE_DEBUG_RAW, True)
 
 
 def init_db() -> None:
@@ -469,6 +486,41 @@ def migrate_json_to_db() -> None:
 # -----------------------------
 # Auth helpers
 # -----------------------------
+
+
+def smtp_enabled() -> bool:
+    return bool(SMTP_HOST and SMTP_FROM)
+
+
+def send_auth_code_email(to_email: str, code: str, expires_minutes: int = 10) -> None:
+    msg = EmailMessage()
+    msg["Subject"] = f"{AUTH_CODE_SENDER_NAME} 邮箱验证码"
+    msg["From"] = SMTP_FROM
+    msg["To"] = to_email
+    msg.set_content(
+        "\n".join(
+            [
+                f"你的验证码是：{code}",
+                f"{expires_minutes} 分钟内有效，请勿泄露给他人。",
+                "",
+                f"{AUTH_CODE_SENDER_NAME}",
+            ]
+        )
+    )
+
+    if SMTP_USE_SSL:
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=12) as server:
+            if SMTP_USER and SMTP_PASS:
+                server.login(SMTP_USER, SMTP_PASS)
+            server.send_message(msg)
+        return
+
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=12) as server:
+        if SMTP_USE_TLS:
+            server.starttls()
+        if SMTP_USER and SMTP_PASS:
+            server.login(SMTP_USER, SMTP_PASS)
+        server.send_message(msg)
 
 
 def create_token(user: Dict[str, Any]) -> str:
@@ -2124,12 +2176,36 @@ def auth_request_code(payload: Dict[str, Any]) -> Dict[str, Any]:
     else:
         hint = normalized[:3] + "****" + normalized[-2:]
 
-    return {
+    delivery = "debug"
+    if kind == "email" and not smtp_enabled() and not AUTH_CODE_DEBUG:
+        raise HTTPException(status_code=500, detail="未配置 SMTP，且关闭了调试验证码，无法发送邮箱验证码。")
+    if kind == "phone" and not AUTH_CODE_DEBUG:
+        raise HTTPException(status_code=501, detail="当前未接入短信服务，请改用邮箱验证码。")
+
+    if kind == "email" and smtp_enabled():
+        try:
+            send_auth_code_email(email, code, expires_minutes=10)
+            delivery = "email"
+        except Exception:
+            raise HTTPException(status_code=500, detail="验证码邮件发送失败，请检查 SMTP 配置。")
+
+    result = {
         "ok": True,
         "identifierHint": hint,
         "expiresInSeconds": 600,
-        "debugCode": code,
+        "delivery": delivery,
     }
+    if AUTH_CODE_DEBUG:
+        result["debugCode"] = code
+    return result
+
+
+@app.post("/api/auth/email/request-code")
+def auth_email_request_code(payload: Dict[str, Any]) -> Dict[str, Any]:
+    email = normalize_email(payload.get("email") or payload.get("identifier"))
+    if not email:
+        raise HTTPException(status_code=400, detail="email is required.")
+    return auth_request_code({"identifier": email})
 
 
 @app.post("/api/auth/code-login")
@@ -2186,6 +2262,16 @@ def auth_code_login(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     token = create_token(user)
     return {"token": token, "user": to_public_user(user), "created": created}
+
+
+@app.post("/api/auth/email/code-login")
+def auth_email_code_login(payload: Dict[str, Any]) -> Dict[str, Any]:
+    email = normalize_email(payload.get("email") or payload.get("identifier"))
+    code = normalize_text(payload.get("code"))
+    display_name = normalize_text(payload.get("displayName"))
+    if not email or not code:
+        raise HTTPException(status_code=400, detail="email and code are required.")
+    return auth_code_login({"identifier": email, "code": code, "displayName": display_name})
 
 
 @app.post("/api/auth/oauth/mock")
