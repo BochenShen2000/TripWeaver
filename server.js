@@ -470,6 +470,158 @@ function canAccessCampusOnly(campusOnly, user) {
   return Boolean(user?.campusVerified);
 }
 
+function normalizePreferenceText(value) {
+  return String(value || "").trim();
+}
+
+function normalizePreferenceKey(value) {
+  return normalizePreferenceText(value).toLowerCase();
+}
+
+function ensureUserPreferenceMemory(user) {
+  if (!user.preferenceMemory || typeof user.preferenceMemory !== "object") {
+    user.preferenceMemory = {
+      interactions: 0,
+      updatedAt: null,
+      recent: [],
+      places: {},
+      cities: {},
+      categories: {},
+      interests: {},
+    };
+  }
+  const memory = user.preferenceMemory;
+  if (!Array.isArray(memory.recent)) memory.recent = [];
+  if (!memory.places || typeof memory.places !== "object") memory.places = {};
+  if (!memory.cities || typeof memory.cities !== "object") memory.cities = {};
+  if (!memory.categories || typeof memory.categories !== "object") memory.categories = {};
+  if (!memory.interests || typeof memory.interests !== "object") memory.interests = {};
+  if (!Number.isFinite(Number(memory.interactions))) memory.interactions = 0;
+  return memory;
+}
+
+function getPreferenceActionWeight(actionType) {
+  const key = normalizePreferenceKey(actionType);
+  if (key === "discover_tonight") return 5;
+  if (key === "launch_group") return 5;
+  if (key === "discover_select") return 4;
+  if (key === "route_join") return 4;
+  if (key === "discover_buddy") return 3;
+  if (key === "plan_view") return 2;
+  return 1;
+}
+
+function updateScoreBucket(bucket, key, value) {
+  const normalizedKey = normalizePreferenceKey(key);
+  if (!normalizedKey) return;
+  const current = Number(bucket[normalizedKey] || 0);
+  bucket[normalizedKey] = Number((current + value).toFixed(3));
+}
+
+function trackPreferenceMemory(memory, payload = {}) {
+  const actionType = normalizePreferenceText(payload.actionType || "generic");
+  const baseWeight = getPreferenceActionWeight(actionType);
+  const places = Array.isArray(payload.places) ? payload.places.slice(0, 12) : [];
+  const nowIso = new Date().toISOString();
+  let touched = 0;
+
+  for (const rawPlace of places) {
+    const name = normalizePreferenceText(rawPlace?.name || rawPlace?.point);
+    if (!name) continue;
+    const city = normalizePreferenceText(rawPlace?.city);
+    const country = normalizePreferenceText(rawPlace?.country);
+    const category = normalizePreferenceText(rawPlace?.category || rawPlace?.primaryType);
+    const interest = normalizePreferenceText(rawPlace?.interest);
+    const weight = Number.isFinite(Number(rawPlace?.weight))
+      ? Math.max(0.2, Math.min(8, Number(rawPlace.weight)))
+      : 1;
+    const scoreDelta = baseWeight * weight;
+
+    const placeKey = `${normalizePreferenceKey(name)}|${normalizePreferenceKey(city)}|${normalizePreferenceKey(country)}`;
+    const placeEntry = memory.places[placeKey] || {
+      name,
+      city,
+      country,
+      category,
+      count: 0,
+      score: 0,
+      lastAt: null,
+    };
+    placeEntry.name = placeEntry.name || name;
+    placeEntry.city = placeEntry.city || city;
+    placeEntry.country = placeEntry.country || country;
+    placeEntry.category = placeEntry.category || category;
+    placeEntry.count += 1;
+    placeEntry.score = Number((Number(placeEntry.score || 0) + scoreDelta).toFixed(3));
+    placeEntry.lastAt = nowIso;
+    memory.places[placeKey] = placeEntry;
+
+    if (city || country) {
+      const cityKey = `${normalizePreferenceKey(city)}|${normalizePreferenceKey(country)}`;
+      updateScoreBucket(memory.cities, cityKey, scoreDelta);
+    }
+    if (category) updateScoreBucket(memory.categories, category, scoreDelta);
+    if (interest) updateScoreBucket(memory.interests, interest, scoreDelta);
+
+    memory.recent.push({
+      actionType,
+      name,
+      city,
+      country,
+      category,
+      interest,
+      at: nowIso,
+    });
+    touched += 1;
+  }
+
+  if (memory.recent.length > 160) {
+    memory.recent = memory.recent.slice(-160);
+  }
+  if (touched > 0) {
+    memory.interactions = Number(memory.interactions || 0) + touched;
+    memory.updatedAt = nowIso;
+  }
+  return touched;
+}
+
+function sortedTopEntries(scoreMap, limit = 5) {
+  return Object.entries(scoreMap || {})
+    .filter(([, score]) => Number(score) > 0)
+    .sort((a, b) => Number(b[1]) - Number(a[1]))
+    .slice(0, limit);
+}
+
+function parseCityCountryKey(key) {
+  const [city = "", country = ""] = String(key || "").split("|");
+  return { city, country };
+}
+
+function computePreferenceBoost(place, memory, anchorCity = "", anchorCountry = "") {
+  let boost = 0;
+  const placeNameKey = normalizePreferenceKey(place.point || place.displayName || "");
+  const topPlaces = Object.values(memory.places || {})
+    .sort((a, b) => Number(b.score || 0) - Number(a.score || 0))
+    .slice(0, 8);
+
+  const matchedPlace = topPlaces.find((item) => normalizePreferenceKey(item.name) === placeNameKey);
+  if (matchedPlace) {
+    boost += Math.min(28, Number(matchedPlace.score || 0) * 0.55);
+  }
+
+  const cityKey = `${normalizePreferenceKey(anchorCity)}|${normalizePreferenceKey(anchorCountry)}`;
+  if (memory.cities?.[cityKey]) {
+    boost += Math.min(16, Number(memory.cities[cityKey]) * 0.2);
+  }
+
+  const topCategory = sortedTopEntries(memory.categories, 1)[0]?.[0] || "";
+  const typeText = `${place.primaryType || ""} ${(place.types || []).join(" ")}`.toLowerCase();
+  if (topCategory && typeText.includes(topCategory)) {
+    boost += 8;
+  }
+  return boost;
+}
+
 function ensureIsoDateTime(value) {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return null;
@@ -2383,6 +2535,72 @@ async function discoverRealtimeLocalPlaces({ q, city, country, category, limit =
     .slice(0, target);
 }
 
+async function buildPersonalizedDiscoveryRecommendations(user, options = {}) {
+  const memory = ensureUserPreferenceMemory(user);
+  const limit = Math.min(Math.max(Number(options.limit) || 8, 3), 12);
+  const topCityEntry = sortedTopEntries(memory.cities, 1)[0];
+  const parsedTopCity = parseCityCountryKey(topCityEntry?.[0] || "");
+  const anchorCity = normalizePreferenceText(options.city || parsedTopCity.city || "Singapore");
+  const anchorCountry = normalizePreferenceText(options.country || parsedTopCity.country || "Singapore");
+  const regionCode = normalizeCountryToRegionCode(anchorCountry);
+  const topCategory = sortedTopEntries(memory.categories, 1)[0]?.[0] || "";
+
+  const collected = [];
+  const topPlaces = Object.values(memory.places || {})
+    .sort((a, b) => Number(b.score || 0) - Number(a.score || 0))
+    .slice(0, 5);
+
+  for (const pref of topPlaces) {
+    const query = `${pref.name} ${pref.city || anchorCity} ${pref.country || anchorCountry}`.trim();
+    const found = await googlePlacesSearch(query, { regionCode, maxResultCount: 4 });
+    if (!found.length) continue;
+    const best = await enrichPlaceForItinerary(found[0], {
+      city: pref.city || anchorCity,
+      country: pref.country || anchorCountry,
+      interest: pref.category || topCategory || "local",
+    });
+    collected.push({
+      ...best,
+      city: pref.city || anchorCity,
+      country: pref.country || anchorCountry,
+      recommendReason: `基于你最近常选：${pref.name}`,
+    });
+  }
+
+  const supplemental = await discoverRealtimeLocalPlaces({
+    q: topCategory || "popular places",
+    city: anchorCity,
+    country: anchorCountry,
+    category: topCategory || "",
+    limit: Math.max(limit, 6),
+  });
+  for (const place of supplemental) {
+    collected.push({
+      ...place,
+      city: place.city || anchorCity,
+      country: place.country || anchorCountry,
+      recommendReason: place.recommendReason || (topCategory ? `你偏好 ${topCategory}` : "根据你的历史偏好推荐"),
+    });
+  }
+
+  const dedup = [];
+  const seen = new Set();
+  for (const item of collected) {
+    const key = item.placeId || `${normalizePreferenceKey(item.point)}|${Number(item.lat).toFixed(5)}|${Number(item.lng).toFixed(5)}`;
+    if (!item.point || seen.has(key)) continue;
+    seen.add(key);
+    const personalizedScore = Number(item.allure?.score || 60) + computePreferenceBoost(item, memory, anchorCity, anchorCountry);
+    dedup.push({
+      ...item,
+      personalizedScore: Math.round(personalizedScore),
+    });
+  }
+
+  return dedup
+    .sort((a, b) => Number(b.personalizedScore || 0) - Number(a.personalizedScore || 0))
+    .slice(0, limit);
+}
+
 function createActivity(plan) {
   const code = `ACT-${Math.floor(1000 + Math.random() * 9000)}`;
   const tokenBase = Buffer.from(
@@ -3041,6 +3259,56 @@ app.get("/api/discovery/places", async (req, res) => {
     return res.json(places);
   } catch (err) {
     return res.status(500).json({ error: `Discovery failed: ${err.message}` });
+  }
+});
+
+app.post("/api/preferences/track", authMiddleware, (req, res) => {
+  const { actionType, places, context } = req.body || {};
+  const users = readJson(USERS_FILE);
+  const idx = users.findIndex((u) => u.id === req.user.id);
+  if (idx < 0) return res.status(404).json({ error: "User not found." });
+  const memory = ensureUserPreferenceMemory(users[idx]);
+  const touched = trackPreferenceMemory(memory, { actionType, places, context });
+  users[idx].preferenceMemory = memory;
+  writeJson(USERS_FILE, users);
+  return res.json({
+    ok: true,
+    touched,
+    interactions: memory.interactions,
+    updatedAt: memory.updatedAt,
+  });
+});
+
+app.get("/api/discovery/recommendations", authMiddleware, async (req, res) => {
+  const { limit = 8, city = "", country = "" } = req.query;
+  try {
+    const users = readJson(USERS_FILE);
+    const user = users.find((u) => u.id === req.user.id);
+    if (!user) return res.status(404).json({ error: "User not found." });
+    const memory = ensureUserPreferenceMemory(user);
+    if (!Number(memory.interactions) || !Object.keys(memory.places || {}).length) {
+      const fallback = await discoverRealtimeLocalPlaces({
+        q: "popular places",
+        city: String(city || "Singapore"),
+        country: String(country || "Singapore"),
+        category: "",
+        limit: Number(limit) || 8,
+      });
+      return res.json(
+        fallback.map((item) => ({
+          ...item,
+          recommendReason: "新用户默认热门推荐",
+        })),
+      );
+    }
+    const list = await buildPersonalizedDiscoveryRecommendations(user, {
+      limit: Number(limit) || 8,
+      city: String(city || ""),
+      country: String(country || ""),
+    });
+    return res.json(list);
+  } catch (err) {
+    return res.status(500).json({ error: `Recommendation failed: ${err.message}` });
   }
 });
 

@@ -479,6 +479,20 @@ const api = {
     if (params.limit) query.set("limit", params.limit);
     return this.request(`/api/discovery/places?${query.toString()}`);
   },
+  getDiscoveryRecommendations(params = {}) {
+    const query = new URLSearchParams();
+    if (params.limit) query.set("limit", params.limit);
+    if (params.city) query.set("city", params.city);
+    if (params.country) query.set("country", params.country);
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    return this.request(`/api/discovery/recommendations${suffix}`);
+  },
+  trackPreference(payload) {
+    return this.request("/api/preferences/track", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
   getAggregatedFeed() {
     return this.request("/api/aggregated/feed");
   },
@@ -974,6 +988,9 @@ function setExplorePanel(panel, persist = true, manual = false, recommendationMo
   if (changed || window.location.hash.replace("#", "") === "explore") {
     syncTopbarScreen();
   }
+  if (panel === "nearby") {
+    loadPersonalizedRecommendations({ force: false }).catch(() => {});
+  }
 }
 
 function inferExplorePanelFromNote(note = "") {
@@ -1131,6 +1148,10 @@ async function applyGeneratedPlan(plan, note = "") {
   planSection.classList.remove("hidden");
   activitySection.classList.add("hidden");
   markFlowStep("plan", note || currentPlan.title || "路线已生成");
+  trackPreferenceAction("plan_view", buildTrackedPlacesFromPlan(currentPlan, 6), {
+    note: note || "",
+    source: "apply_generated_plan",
+  });
   navigateToScreen("plan", "plan-section");
 }
 
@@ -1229,6 +1250,10 @@ async function launchTonightGroup(options = {}) {
     await sendContentToSelectedChat(appendRouteJoinPayloadToMessage(buildTonightLaunchMessage(plan, activity, scene), plan));
     await sendContentToSelectedChat(buildTonightDiscussionTemplate(plan));
 
+    trackPreferenceAction("launch_group", buildTrackedPlacesFromPlan(plan, 6), {
+      scene,
+      source: "tonight_group",
+    });
     markFlowStep("join", "今晚成团消息已发群");
     navigateToScreen("social", "social-section");
     await api.logEvent("tonight_group_launch", {
@@ -1888,12 +1913,17 @@ async function loadInspirations() {
   renderInspirations(posts);
 }
 
-function renderDiscoverPlaces(places) {
+function renderDiscoverPlaces(places, options = {}) {
+  const mode = options.mode || "search";
+  const heading = String(options.heading || "").trim();
+  const emptyText =
+    options.emptyText || (mode === "recommend" ? "暂时还没有足够偏好数据，先选几个地点让我学习。" : "暂无匹配商户，请换关键词。");
   if (!places.length) {
-    discoverList.innerHTML = `<div class="meta">暂无匹配商户，请换关键词。</div>`;
+    discoverList.dataset.mode = mode;
+    discoverList.innerHTML = `<div class="meta">${escapeHtml(emptyText)}</div>`;
     return;
   }
-  discoverList.innerHTML = places
+  const cardsHtml = places
     .map((p) => {
       const mapsUrl = p.googleMapsUri || createGoogleMapsSearchUrl(p.matchedName || p.point);
       const rating = formatRatingText(p.rating, p.userRatingCount);
@@ -1903,6 +1933,7 @@ function renderDiscoverPlaces(places) {
       const title = p.point || p.matchedName || "推荐地点";
       const summary = String(p.intro || "").trim() || "交通便利，适合加入本次路线。";
       const tags = Array.isArray(p.vibeTags) && p.vibeTags.length ? p.vibeTags : [ticket, openState, price];
+      const recommendReason = String(p.recommendReason || "").trim();
       const heroHtml = renderPlaceHero(p, title);
       const moreBody = `
         <p class="chat-content">${escapeHtml(summary)}</p>
@@ -1918,6 +1949,7 @@ function renderDiscoverPlaces(places) {
       <article class="travel-item compact place-card">
         ${heroHtml}
         <div class="travel-head"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(price)}</span></div>
+        ${recommendReason ? `<div class="travel-meta">推荐理由：${escapeHtml(recommendReason)}</div>` : ""}
         <div class="travel-meta">${escapeHtml(summary)}</div>
         <div class="travel-meta">评分：${rating} | ${escapeHtml(openState)}</div>
         ${renderTagChips(tags)}
@@ -1946,6 +1978,93 @@ function renderDiscoverPlaces(places) {
     `;
     })
     .join("");
+  discoverList.dataset.mode = mode;
+  if (heading) {
+    discoverList.innerHTML = `
+      <article class="travel-item">
+        <div class="travel-head"><strong>${escapeHtml(heading)}</strong><span>${escapeHtml(mode === "recommend" ? "基于你的历史选择" : "地点列表")}</span></div>
+        <div class="travel-list">${cardsHtml}</div>
+      </article>
+    `;
+    return;
+  }
+  discoverList.innerHTML = cardsHtml;
+}
+
+function buildTrackedPlacesFromPlan(plan, limit = 6) {
+  if (!plan || !Array.isArray(plan.route)) return [];
+  return plan.route
+    .slice(0, limit)
+    .map((step) => ({
+      name: step.point,
+      city: step.city || lastDiscoverContext.city || "",
+      country: step.country || lastDiscoverContext.country || "",
+      category: step.primaryType || "",
+      interest: step.primaryType || "",
+      weight: 1,
+    }))
+    .filter((item) => String(item.name || "").trim());
+}
+
+async function trackPreferenceAction(actionType, places = [], context = {}) {
+  if (!currentUser) return;
+  const normalizedPlaces = (Array.isArray(places) ? places : [])
+    .map((place) => ({
+      name: String(place?.name || place?.point || "").trim(),
+      city: String(place?.city || "").trim(),
+      country: String(place?.country || "").trim(),
+      category: String(place?.category || place?.primaryType || "").trim(),
+      interest: String(place?.interest || "").trim(),
+      weight: Number.isFinite(Number(place?.weight)) ? Number(place.weight) : 1,
+    }))
+    .filter((place) => place.name)
+    .slice(0, 10);
+  if (!normalizedPlaces.length) return;
+  try {
+    await api.trackPreference({
+      actionType,
+      places: normalizedPlaces,
+      context: context || {},
+    });
+  } catch (_err) {
+    // Ignore preference tracking failures to avoid blocking UX.
+  }
+}
+
+async function loadPersonalizedRecommendations(options = {}) {
+  if (!discoverList) return;
+  const force = Boolean(options.force);
+  const hasContent = Boolean(discoverList.innerHTML.trim());
+  const mode = discoverList.dataset.mode || "";
+  if (!force && hasContent && mode === "search") {
+    return;
+  }
+  if (!currentUser) {
+    if (force || !hasContent || mode === "recommend") {
+      discoverList.dataset.mode = "recommend";
+      discoverList.innerHTML = `<div class="meta">登录后可根据你的历史选择推荐最可能想去的地点。</div>`;
+    }
+    return;
+  }
+  const city = String(lastDiscoverContext.city || "").trim();
+  const country = String(lastDiscoverContext.country || "").trim();
+  try {
+    const places = await api.getDiscoveryRecommendations({
+      limit: 8,
+      city,
+      country,
+    });
+    renderDiscoverPlaces(places, {
+      mode: "recommend",
+      heading: "猜你最可能想去",
+      emptyText: "暂时还没有足够偏好数据，先选几个地点让我学习。",
+    });
+  } catch (_err) {
+    if (!discoverList.innerHTML.trim()) {
+      discoverList.dataset.mode = "recommend";
+      discoverList.innerHTML = `<div class="meta">个性化推荐加载失败，请稍后重试。</div>`;
+    }
+  }
 }
 
 function renderCollabTrips(trips) {
@@ -2496,6 +2615,7 @@ async function applyAuthSuccess(result, successMessage) {
   await loadInspirations();
   await loadAggregatedFeed().catch(() => {});
   await loadCollabTrips();
+  await loadPersonalizedRecommendations({ force: true });
   connectChatSocket();
   if (successMessage) alert(successMessage);
 }
@@ -2604,6 +2724,7 @@ logoutBtn.addEventListener("click", () => {
   chatThreadMeta.textContent = "可切换好友私聊 / 群聊";
   chatThreadMessages.innerHTML = `<div class="meta">登录后开始聊天。</div>`;
   setAuth("", null);
+  loadPersonalizedRecommendations({ force: true }).catch(() => {});
   loadTravelPosts().catch(() => {});
   loadFriendsPanel().catch(() => {});
   loadCampusGroups().catch(() => {});
@@ -2734,6 +2855,10 @@ chatThreadMessages.addEventListener("click", async (e) => {
   joinBtn.textContent = "加入中...";
   try {
     await applyGeneratedPlan(plan, `来自${selectedChatTarget?.name || "群聊"}的一键加入`);
+    trackPreferenceAction("route_join", buildTrackedPlacesFromPlan(plan, 6), {
+      source: "chat_join",
+      chatType: selectedChatTarget?.type || "",
+    });
     alert("已加入该路线并同步到地图。");
   } catch (err) {
     alert(`加入失败: ${err.message}`);
@@ -3341,6 +3466,20 @@ discoverList.addEventListener("click", async (e) => {
       category: lastDiscoverContext.category,
       description: planBtn.getAttribute("data-place-intro") || "",
     };
+    trackPreferenceAction(
+      "discover_select",
+      [
+        {
+          name: seed.title,
+          city: seed.city,
+          country: seed.country,
+          category: seed.category,
+          interest: seed.category,
+          weight: 1.4,
+        },
+      ],
+      { source: "discover_plan" },
+    );
     const intent = buildIntentFromSeed(seed);
     applyIntentToForm(intent);
     markFlowStep("discover", `${seed.city || "附近"} · ${seed.title}`);
@@ -3355,6 +3494,20 @@ discoverList.addEventListener("click", async (e) => {
 
   if (buddyBtn) {
     const placeName = buddyBtn.getAttribute("data-place-name") || "附近地点";
+    trackPreferenceAction(
+      "discover_buddy",
+      [
+        {
+          name: placeName,
+          city: lastDiscoverContext.city,
+          country: lastDiscoverContext.country,
+          category: lastDiscoverContext.category,
+          interest: lastDiscoverContext.category,
+          weight: 1,
+        },
+      ],
+      { source: "discover_buddy" },
+    );
     markFlowStep("discover", placeName);
     await startBuddyDiscussion(`想去 ${placeName}，找搭子一起。`);
     return;
@@ -3368,6 +3521,20 @@ discoverList.addEventListener("click", async (e) => {
       category: tonightBtn.getAttribute("data-place-category") || lastDiscoverContext.category,
       description: tonightBtn.getAttribute("data-place-intro") || "",
     };
+    trackPreferenceAction(
+      "discover_tonight",
+      [
+        {
+          name: seed.title,
+          city: seed.city,
+          country: seed.country,
+          category: seed.category,
+          interest: seed.category,
+          weight: 1.8,
+        },
+      ],
+      { source: "discover_tonight" },
+    );
     const scene = `${seed.city || "附近"} · ${seed.title || "今晚路线"}`;
     await launchTonightGroup({ seed, scene });
   }
@@ -3458,6 +3625,9 @@ window.addEventListener("hashchange", () => {
   const screen = window.location.hash.replace("#", "") || "plan";
   if (screen === "explore") {
     maybeApplyRecommendedExplorePanel(false);
+    if (currentExplorePanel === "nearby") {
+      loadPersonalizedRecommendations({ force: false }).catch(() => {});
+    }
   }
 });
 
@@ -3707,6 +3877,7 @@ async function refreshEvents() {
 async function restoreSession() {
   if (!authToken) {
     renderAuthState();
+    await loadPersonalizedRecommendations({ force: true });
     return;
   }
   try {
@@ -3722,9 +3893,11 @@ async function restoreSession() {
     await loadInspirations();
     await loadAggregatedFeed().catch(() => {});
     await loadCollabTrips();
+    await loadPersonalizedRecommendations({ force: true });
     connectChatSocket();
   } catch (_err) {
     setAuth("", null);
+    await loadPersonalizedRecommendations({ force: true });
   }
 }
 
