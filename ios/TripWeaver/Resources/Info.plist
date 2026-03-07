@@ -41,6 +41,8 @@
 			</dict>
 		</dict>
 	</dict>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>TripWeaver 需要你的定位来自动填写当前城市和国家，用于生成更准确的路线。</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UILaunchScreen</key>

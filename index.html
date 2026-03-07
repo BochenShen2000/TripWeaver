@@ -122,11 +122,20 @@
           </label>
           <label>
             城市
-            <input name="city" placeholder="Tokyo" value="Singapore" required />
+            <select id="intent-city-select" name="city" required></select>
+            <input id="intent-city-custom" type="text" class="location-custom-input hidden" placeholder="手动输入城市" />
           </label>
           <label>
-            国家
-            <input name="country" placeholder="Japan" value="Singapore" required />
+            国家和地区
+            <select id="intent-country-select" name="country" required></select>
+            <input id="intent-country-custom" type="text" class="location-custom-input hidden" placeholder="手动输入国家和地区" />
+          </label>
+          <label class="full-span intent-location-tools">
+            位置来源
+            <div class="intent-location-tools-row">
+              <button id="intent-use-location-btn" type="button" class="btn-secondary">使用当前位置（GPS）</button>
+              <span id="intent-location-status" class="meta">可手动选择或自动定位</span>
+            </div>
           </label>
           <label class="full-span">
             开始时间
@@ -341,8 +350,23 @@
           <summary class="explore-compose-toggle">搜索附近地点</summary>
           <form id="discover-form" class="travel-form">
             <input name="q" placeholder="搜索词（如 ramen / cafe / museum）" required />
-            <input name="city" placeholder="城市（如 Tokyo）" required />
-            <input name="country" placeholder="国家（如 Japan）" required />
+            <label>
+              城市
+              <select id="discover-city-select" name="city" required></select>
+              <input id="discover-city-custom" type="text" class="location-custom-input hidden" placeholder="手动输入城市" />
+            </label>
+            <label>
+              国家和地区
+              <select id="discover-country-select" name="country" required></select>
+              <input id="discover-country-custom" type="text" class="location-custom-input hidden" placeholder="手动输入国家和地区" />
+            </label>
+            <label class="full-span intent-location-tools">
+              位置来源
+              <div class="intent-location-tools-row">
+                <button id="discover-use-location-btn" type="button" class="btn-secondary location-use-btn">使用当前位置（GPS）</button>
+                <span id="discover-location-status" class="meta location-status">可手动选择或自动定位</span>
+              </div>
+            </label>
             <input name="category" placeholder="品类（restaurant/attraction/hotel）" />
             <input name="limit" type="number" min="3" max="20" value="8" />
             <button type="submit" class="btn-primary">搜索真实商户</button>
@@ -410,6 +434,22 @@
               <button id="chat-send-current-plan-btn" type="button" class="btn-secondary">发送当前路线到聊天</button>
               <button id="chat-summarize-thread-btn" type="button" class="btn-secondary">总结当前会话并生成路线</button>
             </div>
+            <details id="chat-interest-activity-card" class="explore-compose-card hidden">
+              <summary class="explore-compose-toggle">发布社群下次活动（时间/地点/主题）</summary>
+              <form id="chat-interest-activity-form" class="travel-form">
+                <input name="theme" placeholder="活动主题（如 周五桌游夜）" required />
+                <input name="startAt" type="datetime-local" required />
+                <input name="endAt" type="datetime-local" />
+                <input name="venueName" placeholder="地点名称（如 The Mind Cafe）" required />
+                <input name="city" placeholder="城市" required />
+                <input name="country" placeholder="国家和地区" required />
+                <input name="lat" placeholder="纬度（可选）" />
+                <input name="lng" placeholder="经度（可选）" />
+                <input name="googleMapsUri" placeholder="Google Maps 链接（可选）" />
+                <textarea name="description" class="full-span" rows="2" placeholder="活动说明（路线、集合、预算）"></textarea>
+                <button type="submit" class="btn-primary">发布到群聊</button>
+              </form>
+            </details>
             <form id="chat-thread-form" class="chat-form">
               <input id="chat-thread-input" name="content" placeholder="输入消息（建议包含时间/预算/必去点）..." required />
               <button type="submit" class="btn-primary">发送</button>

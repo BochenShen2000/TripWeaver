@@ -1,6 +1,7 @@
 import SwiftUI
 import MapKit
 import UIKit
+import CoreLocation
 
 private struct CreateActivityBody: Encodable {
     let id: String
@@ -124,6 +125,99 @@ private struct EditableRouteStop: Identifiable, Hashable {
     }
 }
 
+private struct DestinationPreset: Identifiable {
+    let country: String
+    let cities: [String]
+    var id: String { country }
+}
+
+private enum PlanLocationError: LocalizedError {
+    case permissionDenied
+    case unavailable
+    case requestInProgress
+
+    var errorDescription: String? {
+        switch self {
+        case .permissionDenied:
+            return "定位权限未开启，请在系统设置允许 TripWeaver 使用定位。"
+        case .unavailable:
+            return "当前无法获取定位，请稍后重试。"
+        case .requestInProgress:
+            return "定位请求进行中，请稍候。"
+        }
+    }
+}
+
+@MainActor
+private final class PlanLocationManager: NSObject, CLLocationManagerDelegate {
+    private let manager = CLLocationManager()
+    private var continuation: CheckedContinuation<CLLocationCoordinate2D, Error>?
+
+    override init() {
+        super.init()
+        manager.delegate = self
+        manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+    }
+
+    func requestOneTimeLocation() async throws -> CLLocationCoordinate2D {
+        if continuation != nil {
+            throw PlanLocationError.requestInProgress
+        }
+        return try await withCheckedThrowingContinuation { cont in
+            continuation = cont
+            let status = manager.authorizationStatus
+            switch status {
+            case .authorizedAlways, .authorizedWhenInUse:
+                manager.requestLocation()
+            case .notDetermined:
+                manager.requestWhenInUseAuthorization()
+            case .denied, .restricted:
+                finish(with: .failure(PlanLocationError.permissionDenied))
+            @unknown default:
+                finish(with: .failure(PlanLocationError.unavailable))
+            }
+        }
+    }
+
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        guard continuation != nil else { return }
+        let status = manager.authorizationStatus
+        switch status {
+        case .authorizedAlways, .authorizedWhenInUse:
+            manager.requestLocation()
+        case .denied, .restricted:
+            finish(with: .failure(PlanLocationError.permissionDenied))
+        case .notDetermined:
+            break
+        @unknown default:
+            finish(with: .failure(PlanLocationError.unavailable))
+        }
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let location = locations.first else {
+            finish(with: .failure(PlanLocationError.unavailable))
+            return
+        }
+        finish(with: .success(location.coordinate))
+    }
+
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        finish(with: .failure(error))
+    }
+
+    private func finish(with result: Result<CLLocationCoordinate2D, Error>) {
+        guard let continuation else { return }
+        self.continuation = nil
+        switch result {
+        case .success(let coordinate):
+            continuation.resume(returning: coordinate)
+        case .failure(let error):
+            continuation.resume(throwing: error)
+        }
+    }
+}
+
 struct PlanView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @EnvironmentObject private var session: SessionStore
@@ -155,6 +249,11 @@ struct PlanView: View {
     @State private var launchTicketPrice = "免费"
     @State private var launchRequiresApproval = false
     @State private var launchAttendeeLimit = "50"
+    @StateObject private var locationManager = PlanLocationManager()
+    @State private var locatingCurrentPosition = false
+    @State private var locationHint = ""
+    @State private var selectedCountryPreset = "Singapore"
+    @State private var selectedCityPreset = "Singapore"
 
     var body: some View {
         NavigationStack {
@@ -175,6 +274,7 @@ struct PlanView: View {
             .toolbarTitleDisplayMode(.inline)
             .toolbarBackground(.visible, for: .navigationBar)
             .task(id: session.token) {
+                syncPresetSelectionFromIntent()
                 await loadManualSuggestions(q: "")
             }
             .onChange(of: manualInput) { _, value in
@@ -232,6 +332,7 @@ struct PlanView: View {
     private var inputCard: some View {
         TWCard {
             VStack(spacing: 10) {
+                destinationSelectorSection
                 PlanInputField(title: "兴趣", placeholder: "美食/看展/city walk/桌游/露营/野餐/聚餐", text: $intent.interest)
                 HStack(spacing: 8) {
                     PlanInputField(title: "城市", placeholder: "Tokyo", text: $intent.city)
@@ -263,6 +364,85 @@ struct PlanView: View {
                         .font(.subheadline.weight(.medium))
                 }
             }
+        }
+    }
+
+    private var destinationSelectorSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("目的地（可选下拉或 GPS）")
+                .font(.subheadline.weight(.semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("国家选择")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Picker("国家选择", selection: $selectedCountryPreset) {
+                        ForEach(destinationPresets) { item in
+                            Text(item.country).tag(item.country)
+                        }
+                        Text("手动输入").tag(customLocationValue)
+                    }
+                    .pickerStyle(.menu)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.white.opacity(0.9), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("城市选择")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Picker("城市选择", selection: $selectedCityPreset) {
+                        ForEach(cityPresetsForSelectedCountry, id: \.self) { city in
+                            Text(city).tag(city)
+                        }
+                        Text("手动输入").tag(customLocationValue)
+                    }
+                    .pickerStyle(.menu)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.white.opacity(0.9), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                }
+            }
+
+            HStack(spacing: 8) {
+                Button("填入所选目的地") {
+                    applyPresetLocationToIntent()
+                }
+                .buttonStyle(TWSecondaryButtonStyle())
+
+                Button(locatingCurrentPosition ? "定位中..." : "使用当前位置") {
+                    Task { await fillLocationFromCurrentPosition() }
+                }
+                .buttonStyle(TWSecondaryButtonStyle())
+                .disabled(locatingCurrentPosition)
+            }
+
+            if !locationHint.isEmpty {
+                Text(locationHint)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .onChange(of: selectedCountryPreset) { _, value in
+            if value == customLocationValue {
+                selectedCityPreset = customLocationValue
+                return
+            }
+            if !cityPresetsForSelectedCountry.contains(selectedCityPreset) {
+                selectedCityPreset = cityPresetsForSelectedCountry.first ?? customLocationValue
+            }
+            applyPresetLocationToIntent()
+            Task { await loadManualSuggestions(q: manualInput) }
+        }
+        .onChange(of: selectedCityPreset) { _, _ in
+            applyPresetLocationToIntent()
+            Task { await loadManualSuggestions(q: manualInput) }
         }
     }
 
@@ -404,6 +584,85 @@ struct PlanView: View {
         .padding(.vertical, 6)
         .background(Color.white.opacity(0.85), in: Capsule())
         .buttonStyle(.plain)
+    }
+
+    private var customLocationValue: String {
+        "__custom__"
+    }
+
+    private var destinationPresets: [DestinationPreset] {
+        [
+            DestinationPreset(country: "Singapore", cities: ["Singapore"]),
+            DestinationPreset(country: "Japan", cities: ["Tokyo", "Osaka", "Kyoto", "Sapporo", "Fukuoka"]),
+            DestinationPreset(country: "South Korea", cities: ["Seoul", "Busan", "Jeju"]),
+            DestinationPreset(country: "Thailand", cities: ["Bangkok", "Chiang Mai", "Phuket"]),
+            DestinationPreset(country: "China", cities: ["Shanghai", "Beijing", "Shenzhen", "Guangzhou", "Chengdu"]),
+            DestinationPreset(country: "Malaysia", cities: ["Kuala Lumpur", "Johor Bahru", "Penang"]),
+            DestinationPreset(country: "Indonesia", cities: ["Jakarta", "Bali", "Yogyakarta"]),
+        ]
+    }
+
+    private var cityPresetsForSelectedCountry: [String] {
+        guard selectedCountryPreset != customLocationValue else { return [] }
+        return destinationPresets.first(where: { $0.country == selectedCountryPreset })?.cities ?? []
+    }
+
+    private func syncPresetSelectionFromIntent() {
+        let country = intent.country.trimmingCharacters(in: .whitespacesAndNewlines)
+        let city = intent.city.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let preset = destinationPresets.first(where: { $0.country.compare(country, options: .caseInsensitive) == .orderedSame }) {
+            selectedCountryPreset = preset.country
+            if let matchedCity = preset.cities.first(where: { $0.compare(city, options: .caseInsensitive) == .orderedSame }) {
+                selectedCityPreset = matchedCity
+            } else {
+                selectedCityPreset = city.isEmpty ? (preset.cities.first ?? customLocationValue) : customLocationValue
+            }
+        } else {
+            selectedCountryPreset = country.isEmpty ? "Singapore" : customLocationValue
+            selectedCityPreset = city.isEmpty ? "Singapore" : customLocationValue
+        }
+    }
+
+    private func applyPresetLocationToIntent() {
+        if selectedCountryPreset != customLocationValue {
+            intent.country = selectedCountryPreset
+        }
+        if selectedCityPreset != customLocationValue {
+            intent.city = selectedCityPreset
+        }
+        if intent.area.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let c = intent.city.trimmingCharacters(in: .whitespacesAndNewlines)
+            let k = intent.country.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !c.isEmpty || !k.isEmpty {
+                intent.area = [c, k].filter { !$0.isEmpty }.joined(separator: ", ")
+            }
+        }
+    }
+
+    private func fillLocationFromCurrentPosition() async {
+        locatingCurrentPosition = true
+        defer { locatingCurrentPosition = false }
+        do {
+            let coordinate = try await locationManager.requestOneTimeLocation()
+            let geocoder = CLGeocoder()
+            let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+            let placemarks = try await geocoder.reverseGeocodeLocation(location)
+            let placemark = placemarks.first
+            let city = (placemark?.locality ?? placemark?.subAdministrativeArea ?? placemark?.administrativeArea ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let country = (placemark?.country ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !city.isEmpty, !country.isEmpty else {
+                throw PlanLocationError.unavailable
+            }
+            intent.city = city
+            intent.country = country
+            intent.area = [city, country].joined(separator: ", ")
+            syncPresetSelectionFromIntent()
+            locationHint = "已定位：\(city), \(country)"
+            await loadManualSuggestions(q: manualInput)
+        } catch {
+            locationHint = "定位失败：\(error.localizedDescription)"
+        }
     }
 
     @ViewBuilder

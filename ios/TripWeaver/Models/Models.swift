@@ -187,12 +187,35 @@ struct APIErrorResponse: Codable {
     }
 }
 
+struct ChatGeo: Codable {
+    let lat: Double?
+    let lng: Double?
+    let label: String?
+}
+
+struct InterestActivityPayload: Codable, Identifiable {
+    let id: String
+    let theme: String?
+    let description: String?
+    let startAt: String?
+    let endAt: String?
+    let venueName: String?
+    let city: String?
+    let country: String?
+    let geo: ChatGeo?
+    let googleMapsUri: String?
+    let createdAt: String?
+}
+
 struct ChatMessage: Codable, Identifiable {
     let id: String
     let content: String
     let user: AuthUser?
     let fromUserId: String?
     let toUserId: String?
+    let kind: String?
+    let geo: ChatGeo?
+    let activity: InterestActivityPayload?
     let createdAt: String?
 }
 
@@ -250,6 +273,7 @@ struct InterestGroup: Codable, Identifiable {
     let campusName: String?
     let allowedUserIds: [String]?
     let nextMeetupAt: String?
+    let nextActivity: InterestActivityPayload?
     let members: [AuthUser]?
     let createdAt: String?
 

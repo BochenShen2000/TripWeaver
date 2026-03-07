@@ -1376,6 +1376,76 @@ def google_places_nearby_search(lat: float, lng: float, radius: int = 350, keywo
     return [r for r in results if isinstance(r, dict)][:20]
 
 
+def google_reverse_geocode_city_country(lat: float, lng: float) -> Tuple[str, str, str]:
+    if not GOOGLE_MAPS_API_KEY:
+        return "", "", ""
+    params = {
+        "latlng": f"{lat},{lng}",
+        "language": "zh-CN",
+        "key": GOOGLE_MAPS_API_KEY,
+    }
+    try:
+        resp = requests.get(
+            "https://maps.googleapis.com/maps/api/geocode/json",
+            params=params,
+            timeout=max(1.0, PLACES_HTTP_TIMEOUT_SEC),
+        )
+        data = resp.json()
+    except Exception:
+        return "", "", ""
+    results = data.get("results") if isinstance(data.get("results"), list) else []
+    if not results:
+        return "", "", ""
+    city = ""
+    country = ""
+    display = normalize_text(results[0].get("formatted_address"))
+    for result in results:
+        components = result.get("address_components") if isinstance(result.get("address_components"), list) else []
+        for comp in components:
+            if not isinstance(comp, dict):
+                continue
+            types = comp.get("types") if isinstance(comp.get("types"), list) else []
+            if not city and any(t in types for t in ["locality", "postal_town", "administrative_area_level_2", "sublocality", "administrative_area_level_1"]):
+                city = normalize_text(comp.get("long_name"))
+            if not country and "country" in types:
+                country = normalize_text(comp.get("long_name"))
+        if city and country:
+            break
+    return city, country, display
+
+
+def nominatim_reverse_geocode_city_country(lat: float, lng: float) -> Tuple[str, str, str]:
+    params = {
+        "lat": f"{lat}",
+        "lon": f"{lng}",
+        "format": "jsonv2",
+        "accept-language": "en",
+    }
+    headers = {"User-Agent": "TripWeaver/1.0 (contact@tripweaver.local)"}
+    try:
+        resp = requests.get(
+            "https://nominatim.openstreetmap.org/reverse",
+            params=params,
+            headers=headers,
+            timeout=max(1.0, PLACES_HTTP_TIMEOUT_SEC),
+        )
+        data = resp.json()
+    except Exception:
+        return "", "", ""
+    address = data.get("address") if isinstance(data.get("address"), dict) else {}
+    city = normalize_text(
+        address.get("city")
+        or address.get("town")
+        or address.get("village")
+        or address.get("municipality")
+        or address.get("county")
+        or address.get("state")
+    )
+    country = normalize_text(address.get("country"))
+    display = normalize_text(data.get("display_name"))
+    return city, country, display
+
+
 def score_place_context(place: Dict[str, Any], city: str, country: str) -> float:
     address = normalize_key(place.get("formatted_address"))
     c = normalize_key(city)
@@ -2856,6 +2926,8 @@ def create_interest_group(payload: Dict[str, Any], user: Dict[str, Any] = Depend
         "creator": to_public_user(user),
         "members": [to_public_user(user)],
         "nextMeetupAt": ensure_iso_datetime(payload.get("nextMeetupAt")) or (datetime.now(timezone.utc) + timedelta(days=5)).isoformat(),
+        "nextActivity": None,
+        "activities": [],
         "messages": [],
         "createdAt": now_iso(),
     }
@@ -2918,6 +2990,110 @@ def post_interest_group_message(group_id: str, payload: Dict[str, Any], user: Di
     group["messages"] = msgs[-600:]
     replace_doc("interest_groups", group_id, group)
     return message
+
+
+def build_interest_group_activity(group: Dict[str, Any], payload: Dict[str, Any], user: Dict[str, Any]) -> Dict[str, Any]:
+    theme = normalize_text(payload.get("theme") or payload.get("title"))
+    if not theme:
+        raise HTTPException(status_code=400, detail="Activity theme is required.")
+    start_at = ensure_iso_datetime(payload.get("startAt"))
+    if not start_at:
+        raise HTTPException(status_code=400, detail="Activity startAt is required.")
+    end_at = ensure_iso_datetime(payload.get("endAt"))
+
+    venue_name = normalize_text(payload.get("venueName") or payload.get("placeName") or payload.get("locationName"))
+    city = normalize_text(payload.get("city") or group.get("city"))
+    country = normalize_text(payload.get("country") or group.get("country"))
+    if not city or not country:
+        raise HTTPException(status_code=400, detail="Activity city and country are required.")
+
+    geo = parse_geo(payload.get("geo"))
+    if not geo:
+        lat = parse_float(payload.get("lat"))
+        lng = parse_float(payload.get("lng"))
+        if lat is not None and lng is not None:
+            geo = {"lat": lat, "lng": lng, "label": normalize_text(payload.get("locationLabel") or venue_name)}
+
+    maps_url = normalize_text(payload.get("googleMapsUri") or payload.get("mapsUrl"))
+    if not maps_url:
+        if geo:
+            maps_url = f"https://www.google.com/maps?q={geo['lat']:.5f},{geo['lng']:.5f}"
+        else:
+            maps_url = make_google_search_url(f"{venue_name} {city} {country}")
+
+    return {
+        "id": new_id("IGA"),
+        "theme": theme,
+        "description": normalize_text(payload.get("description")),
+        "startAt": start_at,
+        "endAt": end_at,
+        "venueName": venue_name,
+        "city": city,
+        "country": country,
+        "geo": geo,
+        "googleMapsUri": maps_url,
+        "createdBy": to_public_user(user),
+        "createdAt": now_iso(),
+    }
+
+
+def build_interest_activity_message(activity: Dict[str, Any], user: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
+    title = normalize_text(activity.get("theme"))
+    start_at = normalize_text(activity.get("startAt"))
+    venue_name = normalize_text(activity.get("venueName"))
+    city = normalize_text(activity.get("city"))
+    country = normalize_text(activity.get("country"))
+    location_text = " ".join([p for p in [venue_name, city, country] if p]).strip()
+    summary = normalize_text(payload.get("content"))
+    if not summary:
+        summary = "\n".join(
+            [
+                f"【社群下次活动】{title}",
+                f"时间：{start_at}",
+                f"地点：{location_text or '地点待定'}",
+                "已发布到群内，欢迎直接在此接龙报名。",
+            ]
+        )
+    return {
+        "id": new_id("IGM"),
+        "kind": "interest_activity",
+        "content": summary[:2000],
+        "activity": activity,
+        "user": to_public_user(user),
+        "geo": activity.get("geo"),
+        "createdAt": now_iso(),
+    }
+
+
+@app.post("/api/interest/groups/{group_id}/activities")
+def post_interest_group_activity(group_id: str, payload: Dict[str, Any], user: Dict[str, Any] = Depends(auth_user)) -> Dict[str, Any]:
+    group = get_doc("interest_groups", group_id)
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found.")
+    members = group.get("members") if isinstance(group.get("members"), list) else []
+    if not any(m.get("id") == user["id"] for m in members if isinstance(m, dict)):
+        raise HTTPException(status_code=403, detail="Not a group member.")
+
+    activity = build_interest_group_activity(group, payload, user)
+    message = build_interest_activity_message(activity, user, payload)
+
+    activities = group.get("activities") if isinstance(group.get("activities"), list) else []
+    activities.append(activity)
+    group["activities"] = activities[-200:]
+    group["nextActivity"] = activity
+    group["nextMeetupAt"] = activity.get("startAt") or group.get("nextMeetupAt")
+
+    messages = group.get("messages") if isinstance(group.get("messages"), list) else []
+    messages.append(message)
+    group["messages"] = messages[-600:]
+    replace_doc("interest_groups", group_id, group)
+
+    return {
+        "ok": True,
+        "groupId": group_id,
+        "activity": activity,
+        "message": message,
+    }
 
 
 # -----------------------------
@@ -3691,6 +3867,25 @@ def reverse_place(
         "country": country_text,
         "googleMapsUri": f"https://www.google.com/maps?q={lat_fmt},{lng_fmt}",
         "recommendReason": "手动地图标点",
+    }
+
+
+@app.get("/api/geo/reverse-location")
+def reverse_location(lat: float, lng: float) -> Dict[str, Any]:
+    if lat < -90 or lat > 90 or lng < -180 or lng > 180:
+        raise HTTPException(status_code=400, detail="Invalid coordinates.")
+    city, country, display = google_reverse_geocode_city_country(lat, lng)
+    if not city or not country:
+        nom_city, nom_country, nom_display = nominatim_reverse_geocode_city_country(lat, lng)
+        city = city or nom_city
+        country = country or nom_country
+        display = display or nom_display
+    return {
+        "lat": lat,
+        "lng": lng,
+        "city": city,
+        "country": country,
+        "displayName": display,
     }
 
 

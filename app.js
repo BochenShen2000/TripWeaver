@@ -2,6 +2,12 @@ const form = document.getElementById("intent-form");
 const intentPresets = document.getElementById("intent-presets");
 const intentGenerateFastBtn = document.getElementById("intent-generate-fast-btn");
 const intentStartDatetimeInput = document.getElementById("intent-start-datetime");
+const intentCountrySelect = document.getElementById("intent-country-select");
+const intentCitySelect = document.getElementById("intent-city-select");
+const intentCountryCustomInput = document.getElementById("intent-country-custom");
+const intentCityCustomInput = document.getElementById("intent-city-custom");
+const intentUseLocationBtn = document.getElementById("intent-use-location-btn");
+const intentLocationStatus = document.getElementById("intent-location-status");
 const manualPlaceInput = document.getElementById("manual-place-input");
 const manualPlaceAddBtn = document.getElementById("manual-place-add-btn");
 const manualMapPinBtn = document.getElementById("manual-map-pin-btn");
@@ -76,6 +82,8 @@ const chatTopicChips = document.getElementById("chat-topic-chips");
 const chatInsertTemplateBtn = document.getElementById("chat-insert-template-btn");
 const chatSendCurrentPlanBtn = document.getElementById("chat-send-current-plan-btn");
 const chatSummarizeThreadBtn = document.getElementById("chat-summarize-thread-btn");
+const chatInterestActivityCard = document.getElementById("chat-interest-activity-card");
+const chatInterestActivityForm = document.getElementById("chat-interest-activity-form");
 
 const campusVerifyForm = document.getElementById("campus-verify-form");
 const campusGroupCreateForm = document.getElementById("campus-group-create-form");
@@ -102,6 +110,12 @@ const inspirationList = document.getElementById("inspiration-list");
 
 const discoverForm = document.getElementById("discover-form");
 const discoverList = document.getElementById("discover-list");
+const discoverCountrySelect = document.getElementById("discover-country-select");
+const discoverCitySelect = document.getElementById("discover-city-select");
+const discoverCountryCustomInput = document.getElementById("discover-country-custom");
+const discoverCityCustomInput = document.getElementById("discover-city-custom");
+const discoverUseLocationBtn = document.getElementById("discover-use-location-btn");
+const discoverLocationStatus = document.getElementById("discover-location-status");
 
 const collabTripForm = document.getElementById("collab-trip-form");
 const collabItemForm = document.getElementById("collab-item-form");
@@ -169,6 +183,8 @@ let chatFriendsPayload = { friends: [], requests: [] };
 let chatCampusGroups = [];
 let chatInterestGroups = [];
 let selectedChatTarget = null;
+let chatThreadRefreshTimer = null;
+let chatThreadRefreshInFlight = false;
 let lastDiscoverContext = { city: "", country: "", category: "", q: "" };
 
 const FLOW_ORDER = ["discover", "match", "plan", "launch", "join"];
@@ -247,6 +263,15 @@ const INTENT_PRESETS = {
     },
   },
 };
+const INTENT_LOCATION_PRESETS = [
+  { country: "Singapore", cities: ["Singapore"] },
+  { country: "Japan", cities: ["Tokyo", "Osaka", "Kyoto", "Sapporo", "Fukuoka"] },
+  { country: "South Korea", cities: ["Seoul", "Busan", "Jeju"] },
+  { country: "Thailand", cities: ["Bangkok", "Chiang Mai", "Phuket"] },
+  { country: "China", cities: ["Shanghai", "Beijing", "Shenzhen", "Guangzhou", "Chengdu"] },
+  { country: "Malaysia", cities: ["Kuala Lumpur", "Johor Bahru", "Penang"] },
+  { country: "Indonesia", cities: ["Jakarta", "Bali", "Yogyakarta"] },
+];
 let currentExplorePanel = "official";
 let exploreManualOverrideUntil = 0;
 let toastTimer = null;
@@ -471,6 +496,12 @@ const api = {
       body: JSON.stringify(payload),
     });
   },
+  publishInterestGroupActivity(groupId, payload) {
+    return this.request(`/api/interest/groups/${encodeURIComponent(groupId)}/activities`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
   getLocalEvents(params = {}) {
     const query = new URLSearchParams();
     if (params.city) query.set("city", params.city);
@@ -557,6 +588,12 @@ const api = {
     if (params.country) query.set("country", params.country);
     return this.request(`/api/places/reverse?${query.toString()}`);
   },
+  reverseLocation(params = {}) {
+    const query = new URLSearchParams();
+    query.set("lat", String(params.lat));
+    query.set("lng", String(params.lng));
+    return this.request(`/api/geo/reverse-location?${query.toString()}`);
+  },
   getAggregatedFeed() {
     return this.request("/api/aggregated/feed");
   },
@@ -609,6 +646,11 @@ function setAuth(token, user) {
 
   renderAuthState();
   if (!currentUser) {
+    stopChatThreadAutoRefresh();
+    if (chatInterestActivityCard) {
+      chatInterestActivityCard.classList.add("hidden");
+      chatInterestActivityCard.removeAttribute("open");
+    }
     renderManualSuggestions([]);
   } else {
     loadManualPlaceSuggestions(manualPlaceInput?.value || "").catch(() => {});
@@ -1176,12 +1218,300 @@ function jumpToFlowStep(step) {
   }
 }
 
+const CUSTOM_LOCATION_VALUE = "__custom__";
+
+function normalizeLocationText(value) {
+  return String(value || "").trim();
+}
+
+function sameLocationText(a, b) {
+  return normalizeLocationText(a).toLowerCase() === normalizeLocationText(b).toLowerCase();
+}
+
+function getPresetByCountry(country) {
+  return INTENT_LOCATION_PRESETS.find((item) => sameLocationText(item.country, country)) || null;
+}
+
+function getSelectedCountryChoice() {
+  if (intentCountrySelect) {
+    return normalizeLocationText(intentCountrySelect.value);
+  }
+  return normalizeLocationText(form?.elements?.namedItem("country")?.value || "");
+}
+
+function getSelectedCityChoice() {
+  if (intentCitySelect) {
+    return normalizeLocationText(intentCitySelect.value);
+  }
+  return normalizeLocationText(form?.elements?.namedItem("city")?.value || "");
+}
+
+function getIntentCountryValue() {
+  const choice = getSelectedCountryChoice();
+  if (choice === CUSTOM_LOCATION_VALUE) {
+    return normalizeLocationText(intentCountryCustomInput?.value || "");
+  }
+  return choice;
+}
+
+function getIntentCityValue() {
+  const choice = getSelectedCityChoice();
+  if (choice === CUSTOM_LOCATION_VALUE) {
+    return normalizeLocationText(intentCityCustomInput?.value || "");
+  }
+  return choice;
+}
+
+function renderIntentCountryOptions(preferredCountry = "") {
+  if (!intentCountrySelect) return;
+  const countries = INTENT_LOCATION_PRESETS.map((item) => item.country);
+  intentCountrySelect.innerHTML = countries
+    .map((country) => `<option value="${escapeHtml(country)}">${escapeHtml(country)}</option>`)
+    .join("");
+  intentCountrySelect.insertAdjacentHTML("beforeend", `<option value="${CUSTOM_LOCATION_VALUE}">其他（手动输入）</option>`);
+
+  const preferred = normalizeLocationText(preferredCountry);
+  const matched = countries.find((country) => sameLocationText(country, preferred));
+  if (matched) {
+    intentCountrySelect.value = matched;
+    if (intentCountryCustomInput) intentCountryCustomInput.value = "";
+  } else if (preferred) {
+    intentCountrySelect.value = CUSTOM_LOCATION_VALUE;
+    if (intentCountryCustomInput) intentCountryCustomInput.value = preferred;
+  } else {
+    intentCountrySelect.value = countries.includes("Singapore") ? "Singapore" : countries[0] || CUSTOM_LOCATION_VALUE;
+  }
+}
+
+function renderIntentCityOptions(preferredCity = "") {
+  if (!intentCitySelect) return;
+  const country = getSelectedCountryChoice();
+  const preset = getPresetByCountry(country);
+  const cities = preset ? preset.cities : [];
+  intentCitySelect.innerHTML = cities
+    .map((city) => `<option value="${escapeHtml(city)}">${escapeHtml(city)}</option>`)
+    .join("");
+  intentCitySelect.insertAdjacentHTML("beforeend", `<option value="${CUSTOM_LOCATION_VALUE}">其他（手动输入）</option>`);
+
+  const preferred = normalizeLocationText(preferredCity);
+  const matched = cities.find((city) => sameLocationText(city, preferred));
+  if (matched) {
+    intentCitySelect.value = matched;
+    if (intentCityCustomInput) intentCityCustomInput.value = "";
+  } else if (preferred) {
+    intentCitySelect.value = CUSTOM_LOCATION_VALUE;
+    if (intentCityCustomInput) intentCityCustomInput.value = preferred;
+  } else {
+    intentCitySelect.value = cities.length ? cities[0] : CUSTOM_LOCATION_VALUE;
+  }
+}
+
+function syncIntentLocationCustomVisibility() {
+  if (intentCountryCustomInput) {
+    intentCountryCustomInput.classList.toggle("hidden", getSelectedCountryChoice() !== CUSTOM_LOCATION_VALUE);
+  }
+  if (intentCityCustomInput) {
+    intentCityCustomInput.classList.toggle("hidden", getSelectedCityChoice() !== CUSTOM_LOCATION_VALUE);
+  }
+}
+
+function setIntentLocation(country = "", city = "") {
+  renderIntentCountryOptions(country);
+  renderIntentCityOptions(city);
+  syncIntentLocationCustomVisibility();
+}
+
+function setIntentLocationStatus(text = "", tone = "") {
+  if (!intentLocationStatus) return;
+  intentLocationStatus.textContent = text || "可手动选择或自动定位";
+  intentLocationStatus.dataset.tone = tone || "";
+}
+
+function getDiscoverSelectedCountryChoice() {
+  if (discoverCountrySelect) {
+    return normalizeLocationText(discoverCountrySelect.value);
+  }
+  return normalizeLocationText(discoverForm?.elements?.namedItem("country")?.value || "");
+}
+
+function getDiscoverSelectedCityChoice() {
+  if (discoverCitySelect) {
+    return normalizeLocationText(discoverCitySelect.value);
+  }
+  return normalizeLocationText(discoverForm?.elements?.namedItem("city")?.value || "");
+}
+
+function getDiscoverCountryValue() {
+  const choice = getDiscoverSelectedCountryChoice();
+  if (choice === CUSTOM_LOCATION_VALUE) {
+    return normalizeLocationText(discoverCountryCustomInput?.value || "");
+  }
+  return choice;
+}
+
+function getDiscoverCityValue() {
+  const choice = getDiscoverSelectedCityChoice();
+  if (choice === CUSTOM_LOCATION_VALUE) {
+    return normalizeLocationText(discoverCityCustomInput?.value || "");
+  }
+  return choice;
+}
+
+function renderDiscoverCountryOptions(preferredCountry = "") {
+  if (!discoverCountrySelect) return;
+  const countries = INTENT_LOCATION_PRESETS.map((item) => item.country);
+  discoverCountrySelect.innerHTML = countries
+    .map((country) => `<option value="${escapeHtml(country)}">${escapeHtml(country)}</option>`)
+    .join("");
+  discoverCountrySelect.insertAdjacentHTML("beforeend", `<option value="${CUSTOM_LOCATION_VALUE}">其他（手动输入）</option>`);
+
+  const preferred = normalizeLocationText(preferredCountry);
+  const matched = countries.find((country) => sameLocationText(country, preferred));
+  if (matched) {
+    discoverCountrySelect.value = matched;
+    if (discoverCountryCustomInput) discoverCountryCustomInput.value = "";
+  } else if (preferred) {
+    discoverCountrySelect.value = CUSTOM_LOCATION_VALUE;
+    if (discoverCountryCustomInput) discoverCountryCustomInput.value = preferred;
+  } else {
+    discoverCountrySelect.value = countries.includes("Singapore") ? "Singapore" : countries[0] || CUSTOM_LOCATION_VALUE;
+  }
+}
+
+function renderDiscoverCityOptions(preferredCity = "") {
+  if (!discoverCitySelect) return;
+  const country = getDiscoverSelectedCountryChoice();
+  const preset = getPresetByCountry(country);
+  const cities = preset ? preset.cities : [];
+  discoverCitySelect.innerHTML = cities
+    .map((city) => `<option value="${escapeHtml(city)}">${escapeHtml(city)}</option>`)
+    .join("");
+  discoverCitySelect.insertAdjacentHTML("beforeend", `<option value="${CUSTOM_LOCATION_VALUE}">其他（手动输入）</option>`);
+
+  const preferred = normalizeLocationText(preferredCity);
+  const matched = cities.find((city) => sameLocationText(city, preferred));
+  if (matched) {
+    discoverCitySelect.value = matched;
+    if (discoverCityCustomInput) discoverCityCustomInput.value = "";
+  } else if (preferred) {
+    discoverCitySelect.value = CUSTOM_LOCATION_VALUE;
+    if (discoverCityCustomInput) discoverCityCustomInput.value = preferred;
+  } else {
+    discoverCitySelect.value = cities.length ? cities[0] : CUSTOM_LOCATION_VALUE;
+  }
+}
+
+function syncDiscoverLocationCustomVisibility() {
+  if (discoverCountryCustomInput) {
+    discoverCountryCustomInput.classList.toggle("hidden", getDiscoverSelectedCountryChoice() !== CUSTOM_LOCATION_VALUE);
+  }
+  if (discoverCityCustomInput) {
+    discoverCityCustomInput.classList.toggle("hidden", getDiscoverSelectedCityChoice() !== CUSTOM_LOCATION_VALUE);
+  }
+}
+
+function setDiscoverLocation(country = "", city = "") {
+  renderDiscoverCountryOptions(country);
+  renderDiscoverCityOptions(city);
+  syncDiscoverLocationCustomVisibility();
+}
+
+function setDiscoverLocationStatus(text = "", tone = "") {
+  if (!discoverLocationStatus) return;
+  discoverLocationStatus.textContent = text || "可手动选择或自动定位";
+  discoverLocationStatus.dataset.tone = tone || "";
+}
+
+function initDiscoverLocationInputs() {
+  if (!discoverForm) return;
+  const defaultCountry = normalizeLocationText(discoverForm?.elements?.namedItem("country")?.value || "Singapore");
+  const defaultCity = normalizeLocationText(discoverForm?.elements?.namedItem("city")?.value || "Singapore");
+  setDiscoverLocation(defaultCountry, defaultCity);
+  setDiscoverLocationStatus("");
+}
+
+async function fillDiscoverLocationFromGPS() {
+  if (!navigator.geolocation) {
+    throw new Error("当前浏览器不支持定位。");
+  }
+  setDiscoverLocationStatus("定位中...", "loading");
+  const position = await new Promise((resolve, reject) => {
+    navigator.geolocation.getCurrentPosition(resolve, reject, {
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 0,
+    });
+  });
+  const lat = Number(position?.coords?.latitude);
+  const lng = Number(position?.coords?.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    throw new Error("定位结果无效。");
+  }
+  const result = await api.reverseLocation({ lat, lng });
+  const city = normalizeLocationText(result?.city);
+  const country = normalizeLocationText(result?.country);
+  if (!city || !country) {
+    throw new Error("未能识别当前位置所在城市/国家和地区，请手动选择。");
+  }
+  setDiscoverLocation(country, city);
+  setDiscoverLocationStatus(`已定位：${city}, ${country}`, "success");
+}
+
+function collectDiscoverLocationValues() {
+  const city = getDiscoverCityValue();
+  const country = getDiscoverCountryValue();
+  if (!city) {
+    throw new Error("请选择或输入城市。");
+  }
+  if (!country) {
+    throw new Error("请选择或输入国家和地区。");
+  }
+  return { city, country };
+}
+
+async function fillIntentLocationFromGPS() {
+  if (!navigator.geolocation) {
+    throw new Error("当前浏览器不支持定位。");
+  }
+  setIntentLocationStatus("定位中...", "loading");
+  const position = await new Promise((resolve, reject) => {
+    navigator.geolocation.getCurrentPosition(resolve, reject, {
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 0,
+    });
+  });
+  const lat = Number(position?.coords?.latitude);
+  const lng = Number(position?.coords?.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    throw new Error("定位结果无效。");
+  }
+  const result = await api.reverseLocation({ lat, lng });
+  const city = normalizeLocationText(result?.city);
+  const country = normalizeLocationText(result?.country);
+  if (!city || !country) {
+    throw new Error("未能识别当前位置所在城市/国家和地区，请手动选择。");
+  }
+  setIntentLocation(country, city);
+  setIntentLocationStatus(`已定位：${city}, ${country}`, "success");
+}
+
+function initIntentLocationInputs() {
+  if (!form) return;
+  const defaultCountry = normalizeLocationText(form?.elements?.namedItem("country")?.value || "Singapore");
+  const defaultCity = normalizeLocationText(form?.elements?.namedItem("city")?.value || "Singapore");
+  setIntentLocation(defaultCountry, defaultCity);
+  setIntentLocationStatus("");
+}
+
 function applyIntentToForm(intent) {
   if (!form || !intent) return;
   for (const [key, value] of Object.entries(intent)) {
+    if (key === "city" || key === "country") continue;
     const field = form.elements.namedItem(key);
     if (field && typeof field.value !== "undefined") field.value = value;
   }
+  setIntentLocation(intent.country || "", intent.city || "");
   if (intent.startDate && intent.startTime && intentStartDatetimeInput) {
     intentStartDatetimeInput.value = `${intent.startDate}T${intent.startTime}`;
   }
@@ -1217,8 +1547,8 @@ function manualPlaceKey(place = {}) {
 function upsertManualPlace(place) {
   const normalized = normalizeManualPlace(place);
   if (!normalized.name) return false;
-  if (!normalized.city) normalized.city = String(form?.elements?.namedItem("city")?.value || "").trim();
-  if (!normalized.country) normalized.country = String(form?.elements?.namedItem("country")?.value || "").trim();
+  if (!normalized.city) normalized.city = getIntentCityValue();
+  if (!normalized.country) normalized.country = getIntentCountryValue();
   const key = manualPlaceKey(normalized);
   const idx = manualPlacesForIntent.findIndex((item) => manualPlaceKey(item) === key);
   if (idx >= 0) {
@@ -1244,8 +1574,14 @@ function collectIntentFromForm() {
   intent.budget = String(intent.budget || "中预算").trim() || "中预算";
   intent.timeSlot = String(intent.timeSlot || "今天晚上").trim() || "今天晚上";
   intent.interest = String(intent.interest || "city walk").trim() || "city walk";
-  intent.city = String(intent.city || "").trim();
-  intent.country = String(intent.country || "").trim();
+  intent.city = getIntentCityValue();
+  intent.country = getIntentCountryValue();
+  if (!intent.city) {
+    throw new Error("请选择或输入城市。");
+  }
+  if (!intent.country) {
+    throw new Error("请选择或输入国家和地区。");
+  }
   intent.area = String(intent.area || "").trim() || deriveAreaFromCityCountry(intent.city, intent.country);
   intent.endDate = String(intent.endDate || "").trim();
   intent.fromCountry = String(intent.fromCountry || "").trim();
@@ -1300,8 +1636,8 @@ function renderManualSuggestions(places = []) {
 
 async function saveManualPlacesForAccount(places = []) {
   if (!currentUser || !places.length) return;
-  const city = String(form?.elements?.namedItem("city")?.value || "").trim();
-  const country = String(form?.elements?.namedItem("country")?.value || "").trim();
+  const city = getIntentCityValue();
+  const country = getIntentCountryValue();
   try {
     await api.saveManualPlaces({
       city,
@@ -1318,8 +1654,8 @@ async function loadManualPlaceSuggestions(q = "") {
     renderManualSuggestions([]);
     return;
   }
-  const city = String(form?.elements?.namedItem("city")?.value || "").trim();
-  const country = String(form?.elements?.namedItem("country")?.value || "").trim();
+  const city = getIntentCityValue();
+  const country = getIntentCountryValue();
   try {
     const result = await api.getManualPlaces({
       q: String(q || "").trim(),
@@ -1358,8 +1694,8 @@ async function addManualPlaceFromTextInput() {
   if (!raw) return;
   const added = upsertManualPlace({
     name: raw,
-    city: String(form?.elements?.namedItem("city")?.value || "").trim(),
-    country: String(form?.elements?.namedItem("country")?.value || "").trim(),
+    city: getIntentCityValue(),
+    country: getIntentCountryValue(),
     source: "manual_text",
   });
   renderManualPlaces();
@@ -1372,8 +1708,8 @@ async function addManualPlaceFromTextInput() {
 }
 
 async function resolveAndAddManualMapPoint(lat, lng) {
-  const city = String(form?.elements?.namedItem("city")?.value || "").trim();
-  const country = String(form?.elements?.namedItem("country")?.value || "").trim();
+  const city = getIntentCityValue();
+  const country = getIntentCountryValue();
   let place = null;
   try {
     const result = await api.reversePlace({ lat, lng, city, country });
@@ -1751,6 +2087,67 @@ function buildChatTargetKey(type, id) {
   return `${type}:${id || "global"}`;
 }
 
+function toIsoFromDatetimeLocal(raw) {
+  const value = String(raw || "").trim();
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toISOString();
+}
+
+function formatIsoDateTime(iso) {
+  const raw = String(iso || "").trim();
+  if (!raw) return "";
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return raw;
+  return date.toLocaleString();
+}
+
+function buildGoogleMapUrlFromGeo(geo) {
+  const lat = Number(geo?.lat);
+  const lng = Number(geo?.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return "";
+  return `https://www.google.com/maps?q=${lat.toFixed(5)},${lng.toFixed(5)}`;
+}
+
+function extractInterestActivityFromMessage(message) {
+  if (!message || String(message.kind || "").trim() !== "interest_activity") return null;
+  if (!message.activity || typeof message.activity !== "object") return null;
+  return message.activity;
+}
+
+function renderInterestActivityCard(activity) {
+  if (!activity || typeof activity !== "object") return "";
+  const theme = escapeHtml(activity.theme || "社群活动");
+  const startAt = formatIsoDateTime(activity.startAt);
+  const endAt = formatIsoDateTime(activity.endAt);
+  const venue = escapeHtml(activity.venueName || "地点待定");
+  const cityCountry = [activity.city, activity.country].filter(Boolean).join(", ");
+  const location = cityCountry ? `${venue} · ${escapeHtml(cityCountry)}` : venue;
+  const desc = String(activity.description || "").trim();
+  const geo = activity.geo || {};
+  const lat = Number(geo.lat);
+  const lng = Number(geo.lng);
+  const hasGeo = Number.isFinite(lat) && Number.isFinite(lng);
+  const mapsUrlRaw = String(activity.googleMapsUri || buildGoogleMapUrlFromGeo(geo) || "").trim();
+  const mapsUrl = mapsUrlRaw ? escapeHtml(mapsUrlRaw) : "";
+  const timeRange = startAt && endAt ? `${startAt} - ${endAt}` : startAt || endAt || "时间待定";
+  const coord = hasGeo ? `${lat.toFixed(5)}, ${lng.toFixed(5)}` : "";
+  const mapButton = mapsUrl
+    ? `<a class="btn-secondary chat-activity-map-link" target="_blank" rel="noopener noreferrer" href="${mapsUrl}">打开地图</a>`
+    : "";
+  return `
+    <div class="chat-activity-card">
+      <div class="chat-activity-title">活动主题：${theme}</div>
+      <div class="chat-activity-meta">时间：${escapeHtml(timeRange)}</div>
+      <div class="chat-activity-meta">地点：${location}</div>
+      ${coord ? `<div class="chat-activity-meta">坐标：${escapeHtml(coord)}</div>` : ""}
+      ${desc ? `<p class="chat-activity-desc">${escapeHtml(desc)}</p>` : ""}
+      ${mapButton ? `<div class="actions">${mapButton}</div>` : ""}
+    </div>
+  `;
+}
+
 function markActiveChatTarget() {
   const activeKey = selectedChatTarget ? buildChatTargetKey(selectedChatTarget.type, selectedChatTarget.id) : "";
   document.querySelectorAll(".chat-target-btn").forEach((btn) => {
@@ -1774,6 +2171,8 @@ function renderChatThread(messages) {
       const routeParsed = parseRouteJoinMessage(rawText);
       const text = routeParsed.displayText || rawText;
       const isRouteLike = routeParsed.hasPayload || text.includes("【候选路线】") || text.includes("【路线讨论模板】");
+      const activity = extractInterestActivityFromMessage(m);
+      const activityCard = activity ? renderInterestActivityCard(activity) : "";
       const joinBtn = routeParsed.hasPayload
         ? `<div class="actions"><button class="btn-primary chat-route-join-btn" type="button" data-route-token="${routeParsed.token}">一键加入这条路线</button></div>`
         : "";
@@ -1782,7 +2181,7 @@ function renderChatThread(messages) {
       ).toLocaleString()}${geo}</div><p class="chat-content ${isRouteLike ? "route" : ""}">${escapeHtml(text).replaceAll(
         "\n",
         "<br/>",
-      )}</p>${joinBtn}</article>`;
+      )}</p>${activityCard}${joinBtn}</article>`;
     })
     .join("");
   chatThreadMessages.scrollTop = chatThreadMessages.scrollHeight;
@@ -1862,6 +2261,80 @@ async function sendContentToSelectedChat(content) {
   await openChatTarget(selectedChatTarget);
 }
 
+async function fetchMessagesForTarget(target) {
+  if (!target) return [];
+  if (target.type === "dm") {
+    return api.getDmMessages(target.id);
+  }
+  if (target.type === "global") {
+    return api.getMessages(200);
+  }
+  if (target.type === "campus") {
+    if (chatSocket) chatSocket.emit("campus_group:join", { groupId: target.id });
+    return api.getCampusGroupMessages(target.id);
+  }
+  if (target.type === "interest") {
+    if (chatSocket) chatSocket.emit("interest_group:join", { groupId: target.id });
+    return api.getInterestGroupMessages(target.id);
+  }
+  return [];
+}
+
+function stopChatThreadAutoRefresh() {
+  if (chatThreadRefreshTimer) {
+    clearInterval(chatThreadRefreshTimer);
+    chatThreadRefreshTimer = null;
+  }
+}
+
+function startChatThreadAutoRefresh(target) {
+  stopChatThreadAutoRefresh();
+  if (!currentUser || !target) return;
+  if (!["global", "campus", "interest"].includes(target.type)) return;
+  chatThreadRefreshTimer = setInterval(async () => {
+    if (!selectedChatTarget || chatThreadRefreshInFlight) return;
+    if (buildChatTargetKey(selectedChatTarget.type, selectedChatTarget.id) !== buildChatTargetKey(target.type, target.id)) return;
+    chatThreadRefreshInFlight = true;
+    try {
+      const messages = await fetchMessagesForTarget(selectedChatTarget);
+      renderChatThread(messages);
+    } catch (_err) {
+      // keep thread usable even if one polling request fails
+    } finally {
+      chatThreadRefreshInFlight = false;
+    }
+  }, 8000);
+}
+
+function syncInterestActivityComposer(target) {
+  if (!chatInterestActivityCard || !chatInterestActivityForm) return;
+  const isInterest = Boolean(target && target.type === "interest");
+  chatInterestActivityCard.classList.toggle("hidden", !isInterest);
+  if (!isInterest) {
+    chatInterestActivityCard.removeAttribute("open");
+    return;
+  }
+  const group = chatInterestGroups.find((g) => g.id === target.id) || null;
+  const themeField = chatInterestActivityForm.elements.namedItem("theme");
+  const cityField = chatInterestActivityForm.elements.namedItem("city");
+  const countryField = chatInterestActivityForm.elements.namedItem("country");
+  const startField = chatInterestActivityForm.elements.namedItem("startAt");
+  if (themeField && !String(themeField.value || "").trim()) {
+    themeField.value = `${group?.interest || "兴趣"}活动`;
+  }
+  if (cityField && !String(cityField.value || "").trim()) {
+    cityField.value = group?.city || "";
+  }
+  if (countryField && !String(countryField.value || "").trim()) {
+    countryField.value = group?.country || "";
+  }
+  if (startField && !String(startField.value || "").trim()) {
+    const start = new Date();
+    start.setHours(start.getHours() + 24);
+    startField.value = new Date(start.getTime() - start.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  }
+}
+
 async function openChatTarget(target) {
   if (!currentUser) return;
   selectedChatTarget = target;
@@ -1882,24 +2355,15 @@ async function openChatTarget(target) {
   chatThreadInput.placeholder = placeholderMap[target.type] || "输入消息...";
   markActiveChatTarget();
   updateChatRouteContext();
+  syncInterestActivityComposer(target);
+  startChatThreadAutoRefresh(target);
   updateFlowCoach();
   if (target.type !== "global") {
     markFlowStep("match", target.name || metaMap[target.type] || "已进入聊天");
   }
 
   try {
-    let messages = [];
-    if (target.type === "dm") {
-      messages = await api.getDmMessages(target.id);
-    } else if (target.type === "global") {
-      messages = await api.getMessages(200);
-    } else if (target.type === "campus") {
-      if (chatSocket) chatSocket.emit("campus_group:join", { groupId: target.id });
-      messages = await api.getCampusGroupMessages(target.id);
-    } else if (target.type === "interest") {
-      if (chatSocket) chatSocket.emit("interest_group:join", { groupId: target.id });
-      messages = await api.getInterestGroupMessages(target.id);
-    }
+    const messages = await fetchMessagesForTarget(target);
     renderChatThread(messages);
   } catch (err) {
     chatThreadMessages.innerHTML = `<div class="meta">加载失败：${escapeHtml(err.message)}</div>`;
@@ -2059,6 +2523,10 @@ function renderInterestGroups(groups) {
       const visibilityTag = interestVisibilityLabel(g);
       const isMember = Array.isArray(g.members) && g.members.some((m) => m.id === currentUser?.id);
       const location = [g.city, g.country].filter(Boolean).join(", ") || "地点待定";
+      const nextActivity = g.nextActivity && typeof g.nextActivity === "object" ? g.nextActivity : null;
+      const nextActivityLabel = nextActivity
+        ? `${nextActivity.theme || "社群活动"} · ${formatIsoDateTime(nextActivity.startAt || g.nextMeetupAt)}`
+        : formatIsoDateTime(g.nextMeetupAt);
       const moreBody = `
         <p class="chat-content">${escapeHtml(g.description || "无描述")}</p>
         <div class="actions">
@@ -2071,7 +2539,7 @@ function renderInterestGroups(groups) {
       <article class="travel-item compact">
         <div class="travel-head"><strong>${escapeHtml(g.name)}</strong><span>${escapeHtml(location)}</span></div>
         <div class="travel-meta">兴趣：${escapeHtml(g.interest || "兴趣")} | 成员：${g.members?.length || 0} | ${visibilityTag}</div>
-        <div class="travel-meta">下次活动：${new Date(g.nextMeetupAt).toLocaleString()}</div>
+        <div class="travel-meta">下次活动：${escapeHtml(nextActivityLabel || "待发布")}</div>
         <div class="actions compact-primary-actions">
           <button class="btn-secondary interest-join-btn" data-group-id="${g.id}" type="button">加入社群</button>
         </div>
@@ -3270,6 +3738,7 @@ oauthButtons.forEach((button) => {
 
 if (logoutBtn) {
   logoutBtn.addEventListener("click", () => {
+    stopChatThreadAutoRefresh();
     if (chatSocket) {
       chatSocket.disconnect();
       chatSocket = null;
@@ -3459,6 +3928,50 @@ chatThreadForm.addEventListener("submit", async (e) => {
     alert(`发送失败: ${err.message}`);
   }
 });
+
+if (chatInterestActivityForm) {
+  chatInterestActivityForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!currentUser) return alert("请先登录。");
+    if (!selectedChatTarget || selectedChatTarget.type !== "interest") return alert("请先进入一个兴趣群聊。");
+
+    const data = Object.fromEntries(new FormData(chatInterestActivityForm).entries());
+    const lat = Number(data.lat);
+    const lng = Number(data.lng);
+    const hasGeo = Number.isFinite(lat) && Number.isFinite(lng);
+    const locationLabel = [String(data.venueName || "").trim(), String(data.city || "").trim(), String(data.country || "").trim()]
+      .filter(Boolean)
+      .join(", ");
+    const payload = {
+      theme: String(data.theme || "").trim(),
+      startAt: toIsoFromDatetimeLocal(data.startAt),
+      endAt: toIsoFromDatetimeLocal(data.endAt),
+      venueName: String(data.venueName || "").trim(),
+      city: String(data.city || "").trim(),
+      country: String(data.country || "").trim(),
+      description: String(data.description || "").trim(),
+      googleMapsUri: String(data.googleMapsUri || "").trim(),
+      geo: hasGeo
+        ? {
+            lat,
+            lng,
+            label: locationLabel,
+          }
+        : undefined,
+    };
+
+    try {
+      await api.publishInterestGroupActivity(selectedChatTarget.id, payload);
+      await openChatTarget(selectedChatTarget);
+      chatInterestActivityForm.reset();
+      syncInterestActivityComposer(selectedChatTarget);
+      markFlowStep("launch", `社群活动 ${payload.theme || "已发布"}`);
+      showToast("社群下次活动已发布，群成员可在聊天里直接查看地图信息。", "success");
+    } catch (err) {
+      alert(`发布失败: ${err.message}`);
+    }
+  });
+}
 
 chatThreadMessages.addEventListener("click", async (e) => {
   const joinBtn = e.target.closest(".chat-route-join-btn");
@@ -4039,16 +4552,17 @@ discoverForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const data = Object.fromEntries(new FormData(discoverForm).entries());
   try {
+    const location = collectDiscoverLocationValues();
     const places = await api.discoverPlaces({
       q: data.q,
-      city: data.city,
-      country: data.country,
+      city: location.city,
+      country: location.country,
       category: data.category,
       limit: data.limit,
     });
     lastDiscoverContext = {
-      city: String(data.city || "").trim(),
-      country: String(data.country || "").trim(),
+      city: location.city,
+      country: location.country,
       category: String(data.category || "").trim(),
       q: String(data.q || "").trim(),
     };
@@ -4341,6 +4855,93 @@ if (manualPlaceSuggestions) {
       await saveManualPlacesForAccount([pick]);
     }
     await loadManualPlaceSuggestions("");
+  });
+}
+
+if (intentCountrySelect) {
+  intentCountrySelect.addEventListener("change", async () => {
+    renderIntentCityOptions("");
+    syncIntentLocationCustomVisibility();
+    setIntentLocationStatus("");
+    await loadManualPlaceSuggestions(manualPlaceInput?.value || "");
+  });
+}
+
+if (intentCitySelect) {
+  intentCitySelect.addEventListener("change", async () => {
+    syncIntentLocationCustomVisibility();
+    setIntentLocationStatus("");
+    await loadManualPlaceSuggestions(manualPlaceInput?.value || "");
+  });
+}
+
+if (intentCountryCustomInput) {
+  intentCountryCustomInput.addEventListener("input", () => {
+    setIntentLocationStatus("");
+  });
+}
+
+if (intentCityCustomInput) {
+  intentCityCustomInput.addEventListener("input", () => {
+    setIntentLocationStatus("");
+  });
+}
+
+if (intentUseLocationBtn) {
+  intentUseLocationBtn.addEventListener("click", async () => {
+    try {
+      intentUseLocationBtn.disabled = true;
+      await fillIntentLocationFromGPS();
+      await loadManualPlaceSuggestions(manualPlaceInput?.value || "");
+      showToast("已根据 GPS 自动填入城市和国家和地区。", "success");
+    } catch (err) {
+      setIntentLocationStatus(`定位失败：${err.message}`, "error");
+      showToast(`定位失败：${err.message}`, "error");
+    } finally {
+      intentUseLocationBtn.disabled = false;
+    }
+  });
+}
+
+if (discoverCountrySelect) {
+  discoverCountrySelect.addEventListener("change", () => {
+    renderDiscoverCityOptions("");
+    syncDiscoverLocationCustomVisibility();
+    setDiscoverLocationStatus("");
+  });
+}
+
+if (discoverCitySelect) {
+  discoverCitySelect.addEventListener("change", () => {
+    syncDiscoverLocationCustomVisibility();
+    setDiscoverLocationStatus("");
+  });
+}
+
+if (discoverCountryCustomInput) {
+  discoverCountryCustomInput.addEventListener("input", () => {
+    setDiscoverLocationStatus("");
+  });
+}
+
+if (discoverCityCustomInput) {
+  discoverCityCustomInput.addEventListener("input", () => {
+    setDiscoverLocationStatus("");
+  });
+}
+
+if (discoverUseLocationBtn) {
+  discoverUseLocationBtn.addEventListener("click", async () => {
+    try {
+      discoverUseLocationBtn.disabled = true;
+      await fillDiscoverLocationFromGPS();
+      showToast("已根据 GPS 自动填入城市和国家和地区。", "success");
+    } catch (err) {
+      setDiscoverLocationStatus(`定位失败：${err.message}`, "error");
+      showToast(`定位失败：${err.message}`, "error");
+    } finally {
+      discoverUseLocationBtn.disabled = false;
+    }
   });
 }
 
@@ -4683,6 +5284,8 @@ syncTopbarScreen();
 syncTopbarTitleMode();
 syncActivityLaunchPills();
 applyActivityCoverPreview(activityThemeSelect?.value || "量子");
+initIntentLocationInputs();
+initDiscoverLocationInputs();
 applyIntentPreset(activeIntentPreset, true);
 updateFlowCoach();
 boot();
