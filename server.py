@@ -159,6 +159,17 @@ def normalize_pair(a: str, b: str) -> str:
     return "::".join(sorted([a, b]))
 
 
+def parse_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    raw = normalize_key(value)
+    if raw in {"1", "true", "yes", "y", "on", "是", "开启", "开"}:
+        return True
+    if raw in {"0", "false", "no", "n", "off", "否", "关闭", "关"}:
+        return False
+    return default
+
+
 def init_db() -> None:
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
@@ -1772,6 +1783,7 @@ def create_activity(plan: Dict[str, Any], user: Optional[Dict[str, Any]] = None)
     route = plan.get("route") if isinstance(plan.get("route"), list) else []
     schedule = " | ".join([f"{normalize_text(x.get('date'))} {normalize_text(x.get('time'))} {normalize_text(x.get('point'))}".strip() for x in route])
     intent = plan.get("intent") if isinstance(plan.get("intent"), dict) else {}
+    launch_cfg = plan.get("launchConfig") if isinstance(plan.get("launchConfig"), dict) else {}
     city = normalize_text(intent.get("city"))
     country = normalize_text(intent.get("country"))
     if not city or not country:
@@ -1782,10 +1794,40 @@ def create_activity(plan: Dict[str, Any], user: Optional[Dict[str, Any]] = None)
     last_stop = route[-1] if route else {}
     start_dt = parse_stop_datetime(first_stop, fallback_start)
     end_dt = parse_stop_datetime(last_stop, start_dt + timedelta(hours=3))
+    start_override = parse_datetime(launch_cfg.get("startAt") or launch_cfg.get("startDateTime"))
+    end_override = parse_datetime(launch_cfg.get("endAt") or launch_cfg.get("endDateTime"))
+    if start_override:
+        start_dt = start_override
+    if end_override:
+        end_dt = end_override
     if end_dt <= start_dt:
-        end_dt = start_dt + timedelta(hours=3)
+        end_dt = start_dt + timedelta(hours=1)
 
     venue_name = normalize_text(first_stop.get("point") or first_stop.get("matchedName") or "待定集合点")
+    venue_override = normalize_text(launch_cfg.get("venueName") or launch_cfg.get("location"))
+    if venue_override:
+        venue_name = venue_override
+
+    title = normalize_text(launch_cfg.get("title") or plan.get("title") or "活动")
+    description = normalize_text(launch_cfg.get("description") or plan.get("reason"))
+    calendar_name = normalize_text(launch_cfg.get("calendar") or "个人日历")
+    privacy = normalize_text(launch_cfg.get("privacy") or "私密")
+    timezone_label = normalize_text(launch_cfg.get("timezone") or "GMT+08:00 新加坡")
+    theme = normalize_text(launch_cfg.get("theme") or "量子")
+    cover_image = normalize_text(launch_cfg.get("coverImage"))
+    ticket_price_label = normalize_text(launch_cfg.get("ticketPrice") or "免费")
+    price_value = 0.0
+    if ticket_price_label and normalize_key(ticket_price_label) not in {"free", "免费"}:
+        m = re.search(r"[-+]?\d+(?:\.\d+)?", ticket_price_label)
+        if m:
+            try:
+                price_value = max(0.0, float(m.group(0)))
+            except Exception:
+                price_value = 0.0
+    requires_approval = parse_bool(launch_cfg.get("requiresApproval"), default=False)
+    attendee_limit = clamp(to_int(launch_cfg.get("attendeeLimit"), 50), 1, 5000)
+    currency = normalize_text(launch_cfg.get("currency") or "SGD")
+
     geo = parse_geo({"lat": first_stop.get("lat"), "lng": first_stop.get("lng")})
     creator_public = to_public_user(user) if user else {"id": "system", "username": "system", "displayName": "TripWeaver"}
     owner_id = user["id"] if user else ""
@@ -1794,7 +1836,7 @@ def create_activity(plan: Dict[str, Any], user: Optional[Dict[str, Any]] = None)
         "id": new_id("ACT"),
         "code": code,
         "joinToken": token,
-        "title": normalize_text(plan.get("title") or "活动"),
+        "title": title,
         "city": city,
         "country": country,
         "venueName": venue_name,
@@ -1807,21 +1849,30 @@ def create_activity(plan: Dict[str, Any], user: Optional[Dict[str, Any]] = None)
         "schedule": schedule,
         "link": f"/join/{token}",
         "createdAt": now_iso(),
+        "calendar": calendar_name,
+        "privacy": privacy,
+        "timezone": timezone_label,
+        "description": description,
+        "theme": theme,
+        "ticketPriceLabel": ticket_price_label or "免费",
+        "requiresApproval": requires_approval,
+        "attendeeLimit": attendee_limit,
+        "coverImage": cover_image,
     }
     local_event = {
         "id": new_id("EVT"),
-        "title": activity["title"],
+        "title": title,
         "category": "route_launch",
         "city": city,
         "country": country,
         "venueName": venue_name,
         "startAt": start_dt.isoformat(),
         "endAt": end_dt.isoformat(),
-        "description": normalize_text(plan.get("reason")),
-        "price": 0,
-        "currency": "SGD",
-        "ticketUrl": "",
-        "tags": parse_tags(["route", "路线", normalize_text(intent.get("interest"))]),
+        "description": description,
+        "price": price_value,
+        "currency": currency,
+        "ticketUrl": normalize_text(launch_cfg.get("ticketUrl")) or make_google_search_url(f"{title} {city} {country}"),
+        "tags": parse_tags(["route", "路线", normalize_text(intent.get("interest")), theme]),
         "source": "activity_route",
         "creator": creator_public,
         "rsvps": [{"userId": user["id"], "status": "going", "at": now_iso(), "user": creator_public}] if user else [],
@@ -1829,6 +1880,15 @@ def create_activity(plan: Dict[str, Any], user: Optional[Dict[str, Any]] = None)
         "geo": geo,
         "route": route,
         "routePath": plan.get("routePath") if isinstance(plan.get("routePath"), list) else [],
+        "settings": {
+            "calendar": calendar_name,
+            "privacy": privacy,
+            "timezone": timezone_label,
+            "theme": theme,
+            "ticketPriceLabel": ticket_price_label or "免费",
+            "requiresApproval": requires_approval,
+            "attendeeLimit": attendee_limit,
+        },
     }
     upsert_doc("local_events", local_event, owner_id=owner_id)
     activity["localEventId"] = local_event["id"]

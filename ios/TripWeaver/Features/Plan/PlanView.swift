@@ -1,5 +1,7 @@
 import SwiftUI
 import MapKit
+import PhotosUI
+import UIKit
 
 private struct CreateActivityBody: Encodable {
     let id: String
@@ -11,6 +13,23 @@ private struct CreateActivityBody: Encodable {
     let validationSummary: ValidationSummary?
     let routeSummary: RouteSummary?
     let bookingLinks: BookingLinks?
+    let launchConfig: ActivityLaunchConfigBody?
+}
+
+private struct ActivityLaunchConfigBody: Encodable {
+    let title: String
+    let calendar: String
+    let privacy: String
+    let timezone: String
+    let startAt: String
+    let endAt: String
+    let venueName: String
+    let description: String
+    let ticketPrice: String
+    let requiresApproval: Bool
+    let attendeeLimit: Int
+    let theme: String
+    let coverImage: String?
 }
 
 private struct SaveManualPlacesBody: Encodable {
@@ -43,7 +62,71 @@ private struct PlanInputField: View {
     }
 }
 
+private struct EditableRouteStop: Identifiable, Hashable {
+    let id: UUID
+    var point: String
+    var intro: String
+    var recommendReason: String
+    var dateTime: Date
+    var matchedName: String?
+    var lat: Double?
+    var lng: Double?
+    var verified: Bool?
+    var primaryType: String?
+    var rating: Double?
+    var userRatingCount: Int?
+    var googleMapsUri: String?
+
+    init(_ stop: RouteStop) {
+        id = UUID()
+        point = stop.point
+        intro = stop.intro ?? ""
+        recommendReason = stop.recommendReason ?? ""
+        dateTime = EditableRouteStop.parseDateTime(date: stop.date, time: stop.time) ?? Date()
+        matchedName = stop.matchedName
+        lat = stop.lat
+        lng = stop.lng
+        verified = stop.verified
+        primaryType = stop.primaryType
+        rating = stop.rating
+        userRatingCount = stop.userRatingCount
+        googleMapsUri = stop.googleMapsUri
+    }
+
+    func toRouteStop() -> RouteStop {
+        let dayFormatter = DateFormatter()
+        dayFormatter.dateFormat = "yyyy-MM-dd"
+        let timeFormatter = DateFormatter()
+        timeFormatter.dateFormat = "HH:mm"
+        return RouteStop(
+            point: point.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "未命名地点" : point.trimmingCharacters(in: .whitespacesAndNewlines),
+            matchedName: matchedName,
+            lat: lat,
+            lng: lng,
+            verified: verified,
+            intro: intro.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : intro.trimmingCharacters(in: .whitespacesAndNewlines),
+            primaryType: primaryType,
+            rating: rating,
+            userRatingCount: userRatingCount,
+            date: dayFormatter.string(from: dateTime),
+            time: timeFormatter.string(from: dateTime),
+            googleMapsUri: googleMapsUri,
+            recommendReason: recommendReason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : recommendReason.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+
+    private static func parseDateTime(date: String?, time: String?) -> Date? {
+        let day = (date ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let hm = (time ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !day.isEmpty, !hm.isEmpty else { return nil }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return formatter.date(from: "\(day) \(hm)")
+    }
+}
+
 struct PlanView: View {
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @EnvironmentObject private var session: SessionStore
 
     @State private var intent = IntentPayload()
@@ -59,6 +142,23 @@ struct PlanView: View {
     @State private var loadingSuggestions = false
     @State private var showMapPicker = false
     @State private var resolvingMapPoint = false
+    @State private var editableStops: [EditableRouteStop] = []
+    @State private var routeEditSnapshot: [EditableRouteStop] = []
+    @State private var editingRoute = false
+    @State private var launchCalendar = "个人日历"
+    @State private var launchPrivacy = "私密"
+    @State private var launchTitle = ""
+    @State private var launchStartAt = Date()
+    @State private var launchEndAt = Date().addingTimeInterval(3600)
+    @State private var launchTimezone = "GMT+08:00 新加坡"
+    @State private var launchVenue = ""
+    @State private var launchDescription = ""
+    @State private var launchTicketPrice = "免费"
+    @State private var launchRequiresApproval = false
+    @State private var launchAttendeeLimit = "50"
+    @State private var launchTheme = "量子"
+    @State private var launchCoverPickerItem: PhotosPickerItem?
+    @State private var launchCoverImageData: Data?
 
     var body: some View {
         NavigationStack {
@@ -83,6 +183,12 @@ struct PlanView: View {
             }
             .onChange(of: manualInput) { _, value in
                 Task { await loadManualSuggestions(q: value) }
+            }
+            .onChange(of: launchCoverPickerItem) { _, item in
+                Task {
+                    guard let item else { return }
+                    launchCoverImageData = try? await item.loadTransferable(type: Data.self)
+                }
             }
         }
     }
@@ -312,12 +418,42 @@ struct PlanView: View {
 
     @ViewBuilder
     private func planCard(_ plan: Plan) -> some View {
+        let renderedPlan = mergedPlan(plan, with: editableStops)
         TWCard {
             VStack(alignment: .leading, spacing: 12) {
-                Text(plan.title)
-                    .font(.title3.bold())
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text(renderedPlan.title)
+                        .font(.title3.bold())
+                    Spacer()
+                    if editingRoute {
+                        Button("取消") {
+                            cancelRouteEditing()
+                        }
+                        .font(.caption.weight(.semibold))
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
 
-                if let narrative = plan.narrative {
+                        Button("保存修改") {
+                            saveRouteEditing(basePlan: plan)
+                        }
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(AppTheme.brand.opacity(0.14), in: Capsule())
+                        .buttonStyle(.plain)
+                    } else {
+                        Button("编辑路线") {
+                            startRouteEditing(basePlan: plan)
+                        }
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(AppTheme.brand.opacity(0.14), in: Capsule())
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                if let narrative = renderedPlan.narrative {
                     VStack(alignment: .leading, spacing: 5) {
                         if let hook = narrative.hook, !hook.isEmpty {
                             Text(hook)
@@ -343,56 +479,547 @@ struct PlanView: View {
                     .background(Color.white.opacity(0.76), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
                 }
 
-                if let budget = plan.budgetEstimate {
+                if let budget = renderedPlan.budgetEstimate {
                     Text("预算：\(budget)")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
 
-                if let summary = plan.routeSummary {
+                if let summary = renderedPlan.routeSummary {
                     Text("总路径：约 \(summary.distanceKm ?? 0, specifier: "%.1f") km / \(summary.durationMin ?? 0) 分钟")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
 
-                PlaceMapView(route: plan.route)
+                PlaceMapView(route: renderedPlan.route)
 
                 VStack(spacing: 8) {
-                    ForEach(Array(plan.route.enumerated()), id: \.element.id) { idx, stop in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("\(idx + 1). \((stop.date ?? "")) \((stop.time ?? "")) \(stop.point)")
-                                .font(.subheadline.weight(.semibold))
-                            if let intro = stop.intro {
-                                Text(intro)
-                                    .font(.footnote)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(3)
+                    if editingRoute {
+                        ForEach($editableStops) { $stop in
+                            let stopId = stop.wrappedValue.id
+                            let idx = editableStops.firstIndex(where: { $0.id == stopId }) ?? 0
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Text("第 \(idx + 1) 站")
+                                        .font(.subheadline.weight(.semibold))
+                                    Spacer()
+                                    Text(editableCoordinateText(stop.wrappedValue))
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                                TextField("地点名称", text: $stop.point)
+                                    .textInputAutocapitalization(.words)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 8)
+                                    .background(Color.white.opacity(0.9), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                DatePicker(
+                                    "到达时间",
+                                    selection: $stop.dateTime,
+                                    displayedComponents: [.date, .hourAndMinute]
+                                )
+                                .datePickerStyle(.compact)
+                                .tint(AppTheme.brand)
+                                TextField("地点介绍", text: $stop.intro, axis: .vertical)
+                                    .lineLimit(2...4)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 8)
+                                    .background(Color.white.opacity(0.9), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                TextField("推荐理由", text: $stop.recommendReason, axis: .vertical)
+                                    .lineLimit(2...4)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 8)
+                                    .background(Color.white.opacity(0.9), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                HStack(spacing: 8) {
+                                    Button("上移") {
+                                        moveEditableStop(stopId, offset: -1)
+                                    }
+                                    .buttonStyle(TWSecondaryButtonStyle())
+                                    .disabled(idx == 0)
+
+                                    Button("下移") {
+                                        moveEditableStop(stopId, offset: 1)
+                                    }
+                                    .buttonStyle(TWSecondaryButtonStyle())
+                                    .disabled(idx >= editableStops.count - 1)
+
+                                    Button("删除") {
+                                        removeEditableStop(stopId)
+                                    }
+                                    .buttonStyle(TWSecondaryButtonStyle())
+                                    .disabled(editableStops.count <= 1)
+                                }
                             }
-                            if let reason = stop.recommendReason, !reason.isEmpty {
-                                Text(reason)
-                                    .font(.caption)
-                                    .foregroundStyle(AppTheme.brandDeep)
-                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 9)
+                            .background(Color.white.opacity(0.78), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 9)
-                        .background(Color.white.opacity(0.78), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+
+                        Button {
+                            addEditableStop()
+                        } label: {
+                            Label("新增一站", systemImage: "plus.circle.fill")
+                        }
+                        .buttonStyle(TWSecondaryButtonStyle())
+                    } else {
+                        ForEach(Array(renderedPlan.route.enumerated()), id: \.offset) { idx, stop in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("\(idx + 1). \((stop.date ?? "")) \((stop.time ?? "")) \(stop.point)")
+                                    .font(.subheadline.weight(.semibold))
+                                if let intro = stop.intro {
+                                    Text(intro)
+                                        .font(.footnote)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(3)
+                                }
+                                if let reason = stop.recommendReason, !reason.isEmpty {
+                                    Text(reason)
+                                        .font(.caption)
+                                        .foregroundStyle(AppTheme.brandDeep)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 9)
+                            .background(Color.white.opacity(0.78), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                        }
                     }
                 }
 
-                if let reason = plan.reason, !reason.isEmpty {
+                if editingRoute {
+                    Text("编辑中：调整站点顺序、时间、文案后点“保存修改”。地图会按当前编辑结果实时刷新。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                activityComposerSection(renderedPlan)
+
+                if let reason = renderedPlan.reason, !reason.isEmpty {
                     Text(reason)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
 
-                Button("一键发起活动") {
-                    Task { await createActivity(from: plan) }
+                Button("创建活动") {
+                    Task {
+                        await createActivity(from: renderedPlan, launchConfig: buildLaunchConfig())
+                    }
                 }
                 .buttonStyle(TWSecondaryButtonStyle())
+                .disabled(editingRoute || renderedPlan.route.isEmpty)
             }
         }
+    }
+
+    private func mergedPlan(_ plan: Plan, with editableStops: [EditableRouteStop]) -> Plan {
+        let resolvedRoute = editableStops.isEmpty ? plan.route : editableStops.map { $0.toRouteStop() }
+        let routePath = buildRoutePath(for: resolvedRoute, fallback: plan.routePath)
+        return Plan(
+            id: plan.id,
+            title: plan.title,
+            budgetEstimate: plan.budgetEstimate,
+            reason: plan.reason,
+            route: resolvedRoute,
+            routePath: routePath,
+            validationSummary: plan.validationSummary,
+            routeSummary: plan.routeSummary,
+            bookingLinks: plan.bookingLinks,
+            narrative: plan.narrative
+        )
+    }
+
+    private func buildRoutePath(for route: [RouteStop], fallback: [RoutePathPoint]?) -> [RoutePathPoint]? {
+        let points = route.compactMap { stop -> RoutePathPoint? in
+            guard let lat = stop.lat, let lng = stop.lng else { return nil }
+            return RoutePathPoint(lat: lat, lng: lng)
+        }
+        return points.count >= 2 ? points : fallback
+    }
+
+    private func editableCoordinateText(_ stop: EditableRouteStop) -> String {
+        guard let lat = stop.lat, let lng = stop.lng else { return "坐标待补充" }
+        return "\(lat, specifier: "%.4f"), \(lng, specifier: "%.4f")"
+    }
+
+    private func startRouteEditing(basePlan: Plan) {
+        if editableStops.isEmpty {
+            editableStops = basePlan.route.map(EditableRouteStop.init)
+        }
+        routeEditSnapshot = editableStops
+        editingRoute = true
+    }
+
+    private func cancelRouteEditing() {
+        editableStops = routeEditSnapshot
+        editingRoute = false
+    }
+
+    private func saveRouteEditing(basePlan: Plan) {
+        let updated = mergedPlan(basePlan, with: editableStops)
+        plan = updated
+        editableStops = updated.route.map(EditableRouteStop.init)
+        routeEditSnapshot = editableStops
+        syncLaunchComposer(with: updated, force: false)
+        editingRoute = false
+        activityMessage = "路线修改已保存，可直接发起活动。"
+    }
+
+    private func addEditableStop() {
+        let seed = editableStops.last
+        let stop = EditableRouteStop(
+            RouteStop(
+                point: "新地点",
+                matchedName: nil,
+                lat: seed?.lat,
+                lng: seed?.lng,
+                verified: nil,
+                intro: "",
+                primaryType: nil,
+                rating: nil,
+                userRatingCount: nil,
+                date: nil,
+                time: nil,
+                googleMapsUri: nil,
+                recommendReason: ""
+            )
+        )
+        editableStops.append(stop)
+    }
+
+    private func moveEditableStop(_ id: UUID, offset: Int) {
+        guard let currentIndex = editableStops.firstIndex(where: { $0.id == id }) else { return }
+        let targetIndex = currentIndex + offset
+        guard targetIndex >= 0, targetIndex < editableStops.count else { return }
+        let item = editableStops.remove(at: currentIndex)
+        editableStops.insert(item, at: targetIndex)
+    }
+
+    private func removeEditableStop(_ id: UUID) {
+        editableStops.removeAll { $0.id == id }
+        if editableStops.isEmpty, let first = plan?.route.first {
+            editableStops = [EditableRouteStop(first)]
+        }
+    }
+
+    @ViewBuilder
+    private func activityComposerSection(_ plan: Plan) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                HStack(spacing: 12) {
+                    Text("活动").font(.caption.weight(.bold)).foregroundStyle(.white)
+                    Text("日历").font(.caption.weight(.semibold)).foregroundStyle(.white.opacity(0.78))
+                    Text("发现").font(.caption.weight(.semibold)).foregroundStyle(.white.opacity(0.72))
+                }
+                Spacer()
+                Text(launchCalendar)
+                    .font(.caption2.weight(.semibold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(.white.opacity(0.16), in: Capsule())
+                Text(launchPrivacy)
+                    .font(.caption2.weight(.semibold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(.white.opacity(0.16), in: Capsule())
+            }
+
+            if horizontalSizeClass == .regular {
+                HStack(alignment: .top, spacing: 10) {
+                    launchCoverPanel
+                    launchFieldsPanel
+                }
+            } else {
+                launchCoverPanel
+                launchFieldsPanel
+            }
+        }
+        .padding(12)
+        .background(
+            LinearGradient(
+                colors: [
+                    Color(red: 0.16, green: 0.08, blue: 0.48),
+                    Color(red: 0.20, green: 0.07, blue: 0.58),
+                    Color(red: 0.14, green: 0.18, blue: 0.58),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            ),
+            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(0.16), lineWidth: 1)
+        )
+        .onChange(of: launchStartAt) { _, _ in
+            if launchEndAt <= launchStartAt {
+                launchEndAt = launchStartAt.addingTimeInterval(3600)
+            }
+        }
+    }
+
+    private var launchCoverPanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ZStack {
+                if let data = launchCoverImageData, let uiImage = UIImage(data: data) {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(height: horizontalSizeClass == .regular ? 220 : 180)
+                        .clipped()
+                } else {
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .fill(launchThemeGradient(launchTheme))
+                        .frame(height: horizontalSizeClass == .regular ? 220 : 180)
+                    VStack(spacing: 6) {
+                        Image(systemName: "face.smiling.inverse")
+                            .font(.system(size: 34, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.9))
+                        Text(launchTheme)
+                            .font(.headline.weight(.bold))
+                            .foregroundStyle(.white)
+                        Text("Route Launch")
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.85))
+                    }
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+
+            HStack(spacing: 8) {
+                launchMenuField(title: "主题", value: $launchTheme, options: ["量子", "霓虹夜游", "城市漫游", "露营野餐"])
+                Button("换一组") {
+                    let all = ["量子", "霓虹夜游", "城市漫游", "露营野餐"]
+                    let pool = all.filter { $0 != launchTheme }
+                    launchTheme = pool.randomElement() ?? "量子"
+                }
+                .buttonStyle(TWSecondaryButtonStyle())
+                .frame(maxWidth: 110)
+            }
+
+            PhotosPicker(selection: $launchCoverPickerItem, matching: .images, photoLibrary: .shared()) {
+                Label("更换封面", systemImage: "photo")
+                    .font(.caption.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(TWSecondaryButtonStyle())
+        }
+        .frame(maxWidth: horizontalSizeClass == .regular ? 220 : .infinity, alignment: .leading)
+    }
+
+    private var launchFieldsPanel: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                launchMenuField(title: "日历", value: $launchCalendar, options: ["个人日历", "社群日历", "校园日历"])
+                launchMenuField(title: "可见性", value: $launchPrivacy, options: ["私密", "好友可见", "公开"])
+            }
+
+            launchTextField(title: "活动名称", text: $launchTitle, placeholder: "活动名称")
+
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("开始")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.78))
+                    DatePicker("", selection: $launchStartAt, displayedComponents: [.date, .hourAndMinute])
+                        .labelsHidden()
+                        .datePickerStyle(.compact)
+                        .tint(.white)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .background(Color.white.opacity(0.17), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("结束")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.78))
+                    DatePicker("", selection: $launchEndAt, displayedComponents: [.date, .hourAndMinute])
+                        .labelsHidden()
+                        .datePickerStyle(.compact)
+                        .tint(.white)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .background(Color.white.opacity(0.17), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+            }
+
+            launchTextField(title: "时区", text: $launchTimezone, placeholder: "GMT+08:00 新加坡")
+            launchTextField(title: "添加活动地点", text: $launchVenue, placeholder: "线下地点或线上链接")
+            launchTextField(title: "添加描述", text: $launchDescription, placeholder: "线下地点或线上链接", multiline: true)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("活动选项")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.86))
+                HStack {
+                    Text("门票价格")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.82))
+                    Spacer()
+                    TextField("免费", text: $launchTicketPrice)
+                        .keyboardType(.default)
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 92)
+                        .textFieldStyle(.plain)
+                        .foregroundStyle(.white)
+                }
+                Divider().overlay(Color.white.opacity(0.2))
+                Toggle(isOn: $launchRequiresApproval) {
+                    Text("需要审核")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.82))
+                }
+                .tint(Color(red: 0.64, green: 0.82, blue: 1.0))
+                Divider().overlay(Color.white.opacity(0.2))
+                HStack {
+                    Text("人数限制")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.82))
+                    Spacer()
+                    TextField("50", text: $launchAttendeeLimit)
+                        .keyboardType(.numberPad)
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 72)
+                        .textFieldStyle(.plain)
+                        .foregroundStyle(.white)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(Color.white.opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+    }
+
+    @ViewBuilder
+    private func launchTextField(title: String, text: Binding<String>, placeholder: String, multiline: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.78))
+            if multiline {
+                TextField(placeholder, text: text, axis: .vertical)
+                    .lineLimit(2...4)
+                    .textInputAutocapitalization(.sentences)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(Color.white.opacity(0.17), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .foregroundStyle(.white)
+            } else {
+                TextField(placeholder, text: text)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(Color.white.opacity(0.17), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .foregroundStyle(.white)
+            }
+        }
+    }
+
+    private func launchMenuField(title: String, value: Binding<String>, options: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.78))
+            Menu {
+                ForEach(options, id: \.self) { option in
+                    Button(option) {
+                        value.wrappedValue = option
+                    }
+                }
+            } label: {
+                HStack {
+                    Text(value.wrappedValue)
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Image(systemName: "chevron.down")
+                        .font(.caption2)
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 9)
+                .background(Color.white.opacity(0.17), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+        }
+    }
+
+    private func launchThemeGradient(_ theme: String) -> LinearGradient {
+        switch theme {
+        case "霓虹夜游":
+            return LinearGradient(colors: [Color(red: 0.18, green: 0.07, blue: 0.49), Color(red: 0.41, green: 0.14, blue: 0.73), Color(red: 0.15, green: 0.43, blue: 0.77)], startPoint: .topLeading, endPoint: .bottomTrailing)
+        case "城市漫游":
+            return LinearGradient(colors: [Color(red: 0.15, green: 0.40, blue: 0.56), Color(red: 0.15, green: 0.62, blue: 0.73), Color(red: 0.50, green: 0.78, blue: 0.85)], startPoint: .topLeading, endPoint: .bottomTrailing)
+        case "露营野餐":
+            return LinearGradient(colors: [Color(red: 0.18, green: 0.43, blue: 0.29), Color(red: 0.27, green: 0.61, blue: 0.37), Color(red: 0.56, green: 0.81, blue: 0.63)], startPoint: .topLeading, endPoint: .bottomTrailing)
+        default:
+            return LinearGradient(colors: [Color(red: 0.31, green: 0.80, blue: 0.89), Color(red: 0.37, green: 0.68, blue: 0.95), Color(red: 0.60, green: 0.48, blue: 0.96)], startPoint: .topLeading, endPoint: .bottomTrailing)
+        }
+    }
+
+    private func buildLaunchConfig() -> ActivityLaunchConfigBody {
+        let limit = max(1, min(5000, Int(launchAttendeeLimit) ?? 50))
+        let formatter = ISO8601DateFormatter()
+        return ActivityLaunchConfigBody(
+            title: launchTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "活动名称" : launchTitle.trimmingCharacters(in: .whitespacesAndNewlines),
+            calendar: launchCalendar.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "个人日历" : launchCalendar,
+            privacy: launchPrivacy.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "私密" : launchPrivacy,
+            timezone: launchTimezone.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "GMT+08:00 新加坡" : launchTimezone,
+            startAt: formatter.string(from: launchStartAt),
+            endAt: formatter.string(from: launchEndAt),
+            venueName: launchVenue.trimmingCharacters(in: .whitespacesAndNewlines),
+            description: launchDescription.trimmingCharacters(in: .whitespacesAndNewlines),
+            ticketPrice: launchTicketPrice.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "免费" : launchTicketPrice,
+            requiresApproval: launchRequiresApproval,
+            attendeeLimit: limit,
+            theme: launchTheme.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "量子" : launchTheme,
+            coverImage: encodedLaunchCoverDataURL()
+        )
+    }
+
+    private func encodedLaunchCoverDataURL() -> String? {
+        guard let data = launchCoverImageData, !data.isEmpty else { return nil }
+        let maxBytes = 180_000
+        if data.count > maxBytes { return nil }
+        return "data:image/jpeg;base64,\(data.base64EncodedString())"
+    }
+
+    private func syncLaunchComposer(with plan: Plan, force: Bool) {
+        let now = Date()
+        let fallbackStart = now.addingTimeInterval(2 * 3600)
+        let fallbackEnd = fallbackStart.addingTimeInterval(3600)
+        let first = plan.route.first
+        let last = plan.route.last
+        let start = dateFromStop(first) ?? fallbackStart
+        var end = dateFromStop(last) ?? fallbackEnd
+        if end <= start {
+            end = start.addingTimeInterval(3600)
+        }
+        if force || launchTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            launchTitle = plan.title
+        }
+        if force || launchVenue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            launchVenue = first?.point ?? first?.matchedName ?? ""
+        }
+        if force || launchDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            launchDescription = plan.reason ?? ""
+        }
+        if force {
+            launchStartAt = start
+            launchEndAt = end
+        }
+    }
+
+    private func dateFromStop(_ stop: RouteStop?) -> Date? {
+        guard let stop else { return nil }
+        let day = (stop.date ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let hm = (stop.time ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !day.isEmpty else { return nil }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        if !hm.isEmpty, let date = formatter.date(from: "\(day) \(hm)") {
+            return date
+        }
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.date(from: day)
     }
 
     private func generatePlan() async {
@@ -423,12 +1050,16 @@ struct PlanView: View {
                 body: requestIntent
             )
             plan = result
+            editableStops = result.route.map(EditableRouteStop.init)
+            routeEditSnapshot = editableStops
+            syncLaunchComposer(with: result, force: true)
+            editingRoute = false
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
-    private func createActivity(from plan: Plan) async {
+    private func createActivity(from plan: Plan, launchConfig: ActivityLaunchConfigBody?) async {
         do {
             let body = CreateActivityBody(
                 id: plan.id,
@@ -439,7 +1070,8 @@ struct PlanView: View {
                 routePath: plan.routePath,
                 validationSummary: plan.validationSummary,
                 routeSummary: plan.routeSummary,
-                bookingLinks: plan.bookingLinks
+                bookingLinks: plan.bookingLinks,
+                launchConfig: launchConfig
             )
             let result: GenerateActivityResponse = try await APIClient.request(
                 baseURL: session.apiBaseURL,

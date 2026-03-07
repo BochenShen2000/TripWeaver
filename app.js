@@ -11,6 +11,15 @@ const planSection = document.getElementById("plan-section");
 const planOutput = document.getElementById("plan-output");
 const createActivityBtn = document.getElementById("create-activity");
 const tonightGroupBtn = document.getElementById("tonight-group-btn");
+const activityLaunchForm = document.getElementById("activity-launch-form");
+const activityCoverInput = document.getElementById("activity-cover-input");
+const activityCoverPreview = document.getElementById("activity-cover-preview");
+const activityThemeSelect = document.getElementById("activity-theme");
+const activityThemeShuffleBtn = document.getElementById("activity-theme-shuffle-btn");
+const activityCalendarSelect = document.getElementById("activity-calendar");
+const activityPrivacySelect = document.getElementById("activity-privacy");
+const activityCalendarPill = document.getElementById("activity-calendar-pill");
+const activityPrivacyPill = document.getElementById("activity-privacy-pill");
 const activitySection = document.getElementById("activity-section");
 const activityOutput = document.getElementById("activity-output");
 const shareBtn = document.getElementById("share-btn");
@@ -115,6 +124,8 @@ const officialFeedList = document.getElementById("official-feed-list");
 const exploreRecommendHint = document.getElementById("explore-recommend-hint");
 const exploreBackFlowBtn = document.getElementById("explore-back-flow-btn");
 const appToast = document.getElementById("app-toast");
+const appTopbar = document.querySelector(".app-topbar");
+const appScreenCompactTitle = document.getElementById("app-screen-title-compact");
 const appScreenTitle = document.getElementById("app-screen-title");
 const appScreenSubtitle = document.getElementById("app-screen-subtitle");
 const flowProgressPill = document.getElementById("flow-progress-pill");
@@ -142,6 +153,7 @@ let manualPlacesForIntent = [];
 let manualMapPinMode = false;
 let manualMapClickListener = null;
 let manualSuggestTimer = null;
+let activityCoverDataUrl = "";
 
 let authToken = localStorage.getItem("auth_token") || "";
 let currentUser = null;
@@ -231,6 +243,7 @@ const INTENT_PRESETS = {
 let currentExplorePanel = "official";
 let exploreManualOverrideUntil = 0;
 let toastTimer = null;
+let topbarScrollRaf = 0;
 const ROUTE_JOIN_PAYLOAD_RE = /\[ROUTE_JOIN_PAYLOAD\]([A-Za-z0-9_-]+)\[\/ROUTE_JOIN_PAYLOAD\]/;
 let activeIntentPreset = "tonight_food";
 let flowCoachPrimaryAction = null;
@@ -646,15 +659,30 @@ function closeComposeCardForElement(element) {
 }
 
 function syncTopbarScreen() {
-  if (!appScreenTitle && !appScreenSubtitle) return;
+  if (!appScreenTitle && !appScreenSubtitle && !appScreenCompactTitle) return;
   const screen = window.location.hash.replace("#", "") || "plan";
   const screenMeta = { ...(SCREEN_META[screen] || SCREEN_META.plan) };
   if (screen === "explore") {
     const panelLabel = EXPLORE_PANEL_LABELS[currentExplorePanel] || "官方聚合";
     screenMeta.subtitle = `发现 · ${panelLabel}`;
   }
+  if (appScreenCompactTitle) appScreenCompactTitle.textContent = screenMeta.title;
   if (appScreenTitle) appScreenTitle.textContent = screenMeta.title;
   if (appScreenSubtitle) appScreenSubtitle.textContent = screenMeta.subtitle;
+}
+
+function syncTopbarTitleMode() {
+  if (!appTopbar) return;
+  const collapsed = window.scrollY > 36;
+  appTopbar.classList.toggle("is-collapsed", collapsed);
+}
+
+function requestTopbarTitleModeSync() {
+  if (topbarScrollRaf) return;
+  topbarScrollRaf = window.requestAnimationFrame(() => {
+    topbarScrollRaf = 0;
+    syncTopbarTitleMode();
+  });
 }
 
 function updateFlowProgressPill() {
@@ -1520,8 +1548,8 @@ function buildTonightDiscussionTemplate(plan) {
 交通建议：`;
 }
 
-async function createAndRenderActivityFromPlan(plan, focusPlanScreen = true) {
-  currentActivity = await createActivity(plan);
+async function createAndRenderActivityFromPlan(plan, focusPlanScreen = true, launchConfig = null) {
+  currentActivity = await createActivity(plan, launchConfig);
   currentActivity.link = `${location.origin}${location.pathname}?join=${currentActivity.joinToken}`;
   renderActivity(currentActivity);
   activitySection.classList.remove("hidden");
@@ -2558,6 +2586,7 @@ function renderPlan(plan) {
     <div class="travel-list">${routeHtml}</div>
     <p class="why">${plan.reason}</p>
   `;
+  syncActivityLaunchFormFromPlan(plan, true);
   markFlowStep("plan", plan.title || "路线已生成");
   updateChatRouteContext();
 }
@@ -2909,16 +2938,161 @@ async function renderDefaultGlobalMap() {
   }
 }
 
-function createActivity(plan) {
-  return api.createActivity(plan);
+const ACTIVITY_THEME_PRESETS = {
+  量子:
+    "radial-gradient(circle at 20% 22%, rgba(183, 250, 255, 0.62) 0%, transparent 45%), linear-gradient(130deg, #56dce3 0%, #5ec2ff 34%, #9275ff 100%)",
+  霓虹夜游:
+    "radial-gradient(circle at 15% 18%, rgba(255, 212, 165, 0.56) 0%, transparent 42%), linear-gradient(135deg, #2f0e86 0%, #5d22b2 48%, #2a6ab8 100%)",
+  城市漫游:
+    "radial-gradient(circle at 80% 20%, rgba(214, 245, 255, 0.5) 0%, transparent 40%), linear-gradient(135deg, #2d5f89 0%, #1c85a8 45%, #75c8d8 100%)",
+  露营野餐:
+    "radial-gradient(circle at 16% 18%, rgba(226, 255, 183, 0.55) 0%, transparent 45%), linear-gradient(135deg, #2f7144 0%, #4f9a5f 45%, #8ad0a7 100%)",
+};
+
+function formatDateTimeLocalValue(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return "";
+  const y = date.getFullYear();
+  const m = `${date.getMonth() + 1}`.padStart(2, "0");
+  const d = `${date.getDate()}`.padStart(2, "0");
+  const hh = `${date.getHours()}`.padStart(2, "0");
+  const mm = `${date.getMinutes()}`.padStart(2, "0");
+  return `${y}-${m}-${d}T${hh}:${mm}`;
+}
+
+function parseStopDateTime(stop, fallbackDate) {
+  const date = String(stop?.date || "").trim();
+  const time = String(stop?.time || "").trim() || "19:30";
+  if (!date) return fallbackDate;
+  const parsed = new Date(`${date}T${time}`);
+  if (Number.isNaN(parsed.getTime())) return fallbackDate;
+  return parsed;
+}
+
+function buildLaunchDefaultsFromPlan(plan) {
+  const now = new Date();
+  const fallbackStart = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+  const fallbackEnd = new Date(fallbackStart.getTime() + 60 * 60 * 1000);
+  const firstStop = Array.isArray(plan?.route) && plan.route.length ? plan.route[0] : null;
+  const lastStop = Array.isArray(plan?.route) && plan.route.length ? plan.route[plan.route.length - 1] : null;
+  const startDate = parseStopDateTime(firstStop, fallbackStart);
+  let endDate = parseStopDateTime(lastStop, new Date(startDate.getTime() + 60 * 60 * 1000));
+  if (endDate <= startDate) endDate = new Date(startDate.getTime() + 60 * 60 * 1000);
+  const title = String(plan?.title || "").trim() || "活动名称";
+  return {
+    title,
+    startAt: formatDateTimeLocalValue(startDate),
+    endAt: formatDateTimeLocalValue(endDate),
+    venueName: String(firstStop?.point || firstStop?.matchedName || "").trim(),
+    description: String(plan?.reason || "").trim(),
+    ticketPrice: "免费",
+    attendeeLimit: 50,
+    timezone: "GMT+08:00 新加坡",
+    calendar: "个人日历",
+    privacy: "私密",
+    requiresApproval: false,
+    theme: "量子",
+  };
+}
+
+function applyActivityCoverPreview(theme = "") {
+  if (!activityCoverPreview) return;
+  const selectedTheme = String(theme || activityThemeSelect?.value || "量子").trim() || "量子";
+  const labelStrong = activityCoverPreview.querySelector("strong");
+  const labelSpan = activityCoverPreview.querySelector("span");
+  if (labelStrong) labelStrong.textContent = selectedTheme;
+  if (labelSpan) labelSpan.textContent = "Route Launch";
+  if (activityCoverDataUrl) return;
+  const background = ACTIVITY_THEME_PRESETS[selectedTheme] || ACTIVITY_THEME_PRESETS.量子;
+  activityCoverPreview.style.background = background;
+}
+
+function renderActivityCoverFromDataUrl(dataUrl = "") {
+  if (!activityCoverPreview) return;
+  const safeUrl = String(dataUrl || "").trim();
+  if (!safeUrl) {
+    activityCoverDataUrl = "";
+    activityCoverPreview.innerHTML = `<strong>${escapeHtml(activityThemeSelect?.value || "TripWeaver")}</strong><span>Route Launch</span>`;
+    applyActivityCoverPreview(activityThemeSelect?.value || "量子");
+    return;
+  }
+  activityCoverDataUrl = safeUrl;
+  activityCoverPreview.innerHTML = `<img src="${safeUrl}" alt="活动封面预览" />`;
+}
+
+function syncActivityLaunchPills() {
+  if (activityCalendarPill && activityCalendarSelect) activityCalendarPill.textContent = activityCalendarSelect.value || "个人日历";
+  if (activityPrivacyPill && activityPrivacySelect) activityPrivacyPill.textContent = activityPrivacySelect.value || "私密";
+}
+
+function syncActivityLaunchFormFromPlan(plan, overwrite = true) {
+  if (!activityLaunchForm || !plan) return;
+  const defaults = buildLaunchDefaultsFromPlan(plan);
+  Object.entries(defaults).forEach(([key, value]) => {
+    const field = activityLaunchForm.elements.namedItem(key);
+    if (!field) return;
+    if (field instanceof HTMLInputElement && field.type === "checkbox") {
+      if (overwrite) field.checked = Boolean(value);
+      return;
+    }
+    if (overwrite || !String(field.value || "").trim()) {
+      field.value = value;
+    }
+  });
+  syncActivityLaunchPills();
+  applyActivityCoverPreview(defaults.theme);
+}
+
+function collectLaunchConfigFromForm(plan) {
+  const defaults = buildLaunchDefaultsFromPlan(plan);
+  if (!activityLaunchForm) return defaults;
+  const data = Object.fromEntries(new FormData(activityLaunchForm).entries());
+  const startRaw = String(data.startAt || defaults.startAt || "").trim();
+  const endRaw = String(data.endAt || defaults.endAt || "").trim();
+  const parsedStart = startRaw ? new Date(startRaw) : null;
+  const parsedEnd = endRaw ? new Date(endRaw) : null;
+  const startAt = parsedStart && !Number.isNaN(parsedStart.getTime()) ? parsedStart.toISOString() : new Date().toISOString();
+  let endAt = parsedEnd && !Number.isNaN(parsedEnd.getTime()) ? parsedEnd.toISOString() : new Date(new Date(startAt).getTime() + 60 * 60 * 1000).toISOString();
+  if (new Date(endAt) <= new Date(startAt)) {
+    endAt = new Date(new Date(startAt).getTime() + 60 * 60 * 1000).toISOString();
+  }
+  const limitRaw = Number(data.attendeeLimit);
+  return {
+    title: String(data.title || defaults.title || "").trim() || defaults.title,
+    calendar: String(data.calendar || defaults.calendar || "个人日历").trim(),
+    privacy: String(data.privacy || defaults.privacy || "私密").trim(),
+    timezone: String(data.timezone || defaults.timezone || "GMT+08:00 新加坡").trim(),
+    startAt,
+    endAt,
+    venueName: String(data.venueName || defaults.venueName || "").trim(),
+    description: String(data.description || defaults.description || "").trim(),
+    ticketPrice: String(data.ticketPrice || defaults.ticketPrice || "免费").trim() || "免费",
+    requiresApproval: Boolean(activityLaunchForm.querySelector("#activity-require-approval")?.checked),
+    attendeeLimit: Number.isFinite(limitRaw) ? Math.max(1, Math.min(5000, Math.round(limitRaw))) : 50,
+    theme: String(data.theme || defaults.theme || "量子").trim(),
+    coverImage: activityCoverDataUrl || "",
+  };
+}
+
+function createActivity(plan, launchConfig = null) {
+  const payload = {
+    ...plan,
+    launchConfig: launchConfig || collectLaunchConfigFromForm(plan),
+  };
+  return api.createActivity(payload);
 }
 
 function renderActivity(activity) {
   activityOutput.innerHTML = `
     <h3>${activity.title}</h3>
     <p class="meta">活动编号：${activity.code}</p>
+    <p class="meta">${escapeHtml(activity.calendar || "个人日历")} · ${escapeHtml(activity.privacy || "私密")} · ${escapeHtml(
+      activity.timezone || "GMT+08:00 新加坡",
+    )}</p>
+    <p>时间：${new Date(activity.startAt).toLocaleString()} - ${new Date(activity.endAt).toLocaleString()}</p>
+    <p>地点：${escapeHtml(activity.venueName || "待定集合点")}</p>
     <p>行程：${activity.schedule}</p>
-    <p>${activity.members}</p>
+    <p>规则：${escapeHtml(activity.ticketPriceLabel || "免费")} · ${activity.requiresApproval ? "需审核" : "免审核"} · 限 ${Number(activity.attendeeLimit || 50)} 人</p>
+    <p>${escapeHtml(activity.description || activity.members || "")}</p>
     <p>分享链接：<a href="${activity.link}" target="_blank" rel="noreferrer">${activity.link}</a></p>
   `;
   markFlowStep("launch", activity.code ? `活动 ${activity.code}` : "活动已发起");
@@ -3953,6 +4127,8 @@ if (exploreBackFlowBtn) {
 window.addEventListener("hashchange", () => {
   syncExploreFloatingButton();
   syncTopbarScreen();
+  requestTopbarTitleModeSync();
+  setTimeout(requestTopbarTitleModeSync, 70);
   updateFlowCoach();
   const screen = window.location.hash.replace("#", "") || "plan";
   if (screen === "explore") {
@@ -3962,6 +4138,9 @@ window.addEventListener("hashchange", () => {
     }
   }
 });
+
+window.addEventListener("scroll", requestTopbarTitleModeSync, { passive: true });
+window.addEventListener("resize", requestTopbarTitleModeSync);
 
 if (flowGoDiscoverBtn) flowGoDiscoverBtn.addEventListener("click", () => jumpToFlowStep("discover"));
 if (flowGoMatchBtn) flowGoMatchBtn.addEventListener("click", () => jumpToFlowStep("match"));
@@ -4218,14 +4397,65 @@ form.addEventListener("submit", async (e) => {
   }
 });
 
-createActivityBtn.addEventListener("click", async () => {
-  if (!currentPlan) return;
-  try {
-    await createAndRenderActivityFromPlan(currentPlan, true);
-  } catch (err) {
-    alert(`发起失败: ${err.message}`);
-  }
-});
+if (activityLaunchForm) {
+  activityLaunchForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!currentPlan) return;
+    try {
+      const launchConfig = collectLaunchConfigFromForm(currentPlan);
+      await createAndRenderActivityFromPlan(currentPlan, true, launchConfig);
+      syncActivityLaunchPills();
+    } catch (err) {
+      alert(`发起失败: ${err.message}`);
+    }
+  });
+} else if (createActivityBtn) {
+  createActivityBtn.addEventListener("click", async () => {
+    if (!currentPlan) return;
+    try {
+      await createAndRenderActivityFromPlan(currentPlan, true);
+    } catch (err) {
+      alert(`发起失败: ${err.message}`);
+    }
+  });
+}
+
+if (activityThemeSelect) {
+  activityThemeSelect.addEventListener("change", () => {
+    applyActivityCoverPreview(activityThemeSelect.value);
+  });
+}
+
+if (activityThemeShuffleBtn && activityThemeSelect) {
+  activityThemeShuffleBtn.addEventListener("click", () => {
+    const options = Array.from(activityThemeSelect.options).map((option) => option.value);
+    if (!options.length) return;
+    const pool = options.filter((name) => name !== activityThemeSelect.value);
+    const next = pool.length ? pool[Math.floor(Math.random() * pool.length)] : options[0];
+    activityThemeSelect.value = next;
+    applyActivityCoverPreview(next);
+  });
+}
+
+if (activityCoverInput) {
+  activityCoverInput.addEventListener("change", () => {
+    const file = activityCoverInput.files?.[0];
+    if (!file) {
+      renderActivityCoverFromDataUrl("");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      renderActivityCoverFromDataUrl(String(reader.result || ""));
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+if (activityCalendarSelect || activityPrivacySelect) {
+  activityCalendarSelect?.addEventListener("change", syncActivityLaunchPills);
+  activityPrivacySelect?.addEventListener("change", syncActivityLaunchPills);
+}
 
 if (tonightGroupBtn) {
   tonightGroupBtn.addEventListener("click", async () => {
@@ -4328,6 +4558,9 @@ maybeApplyRecommendedExplorePanel(true);
 renderFlowState();
 syncExploreFloatingButton();
 syncTopbarScreen();
+syncTopbarTitleMode();
+syncActivityLaunchPills();
+applyActivityCoverPreview(activityThemeSelect?.value || "量子");
 applyIntentPreset(activeIntentPreset, true);
 updateFlowCoach();
 boot();
