@@ -47,6 +47,22 @@ python3 server.py
 打开 [http://localhost:3000](http://localhost:3000)。
 独立注册/登录页：[http://localhost:3000/auth.html](http://localhost:3000/auth.html)。
 
+## iOS 前端（SwiftUI）
+
+- 工程目录：`ios/`
+- Xcode 工程：`ios/TripWeaveriOS.xcodeproj`
+- 主要页面：路线生成、发现推荐、账号登录（密码/验证码/OAuth Mock）
+- 默认后端地址：`http://127.0.0.1:3000`（可在 iOS「账号」页修改为公网域名）
+
+生成工程（首次）：
+
+```bash
+brew install xcodegen
+cd ios
+xcodegen generate
+open TripWeaveriOS.xcodeproj
+```
+
 ## API
 
 - `GET /api/health`
