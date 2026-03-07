@@ -171,47 +171,16 @@
         </div>
       </section>
 
-      <section class="card mobile-screen-section" data-screen="social" id="auth-section">
-        <h2>账号系统（多方式登录）</h2>
-        <div class="auth-status-row">
+      <section class="card mobile-screen-section" data-screen="social" id="account-section">
+        <h2>账号与安全</h2>
+        <div class="auth-status-row account-status-row">
           <p id="auth-status" class="meta">未登录</p>
-          <button id="logout-btn" class="btn-secondary hidden" type="button">退出登录</button>
-        </div>
-        <div class="auth-grid">
-          <form id="register-form" class="auth-form">
-            <h3>密码注册</h3>
-            <input name="displayName" placeholder="昵称" required />
-            <input name="username" placeholder="用户名（唯一）" required />
-            <input name="email" type="email" placeholder="邮箱（可选）" />
-            <input name="password" type="password" placeholder="密码（至少6位）" required />
-            <button type="submit" class="btn-primary">注册</button>
-          </form>
-          <form id="login-form" class="auth-form">
-            <h3>密码登录</h3>
-            <input name="identifier" placeholder="用户名或邮箱" required />
-            <input name="password" type="password" placeholder="密码" required />
-            <button type="submit" class="btn-primary">登录</button>
-          </form>
-        </div>
-        <form id="code-login-form" class="auth-form auth-code-form">
-          <h3>验证码登录 / 注册</h3>
-          <input name="identifier" placeholder="邮箱或手机号" required />
-          <div class="auth-inline">
-            <input name="code" placeholder="验证码" required />
-            <button id="request-code-btn" type="button" class="btn-secondary">获取验证码</button>
-          </div>
-          <input name="displayName" placeholder="首次登录昵称（可选）" />
-          <button type="submit" class="btn-primary">验证码登录</button>
-        </form>
-        <div class="oauth-wrap">
-          <p class="meta auth-meta">其他登录方式</p>
-          <div class="oauth-row">
-            <button class="btn-secondary oauth-btn" type="button" data-provider="google">Google 登录</button>
-            <button class="btn-secondary oauth-btn" type="button" data-provider="apple">Apple 登录</button>
-            <button class="btn-secondary oauth-btn" type="button" data-provider="wechat">微信登录</button>
-            <button class="btn-secondary oauth-btn" type="button" data-provider="github">GitHub 登录</button>
+          <div class="account-actions">
+            <button id="go-auth-btn" class="btn-primary" type="button">前往登录/注册</button>
+            <button id="logout-btn" class="btn-secondary hidden" type="button">退出登录</button>
           </div>
         </div>
+        <p class="meta">登录页已独立，支持密码登录、验证码登录、第三方快捷登录。</p>
       </section>
 
       <section class="card hidden mobile-screen-section" data-screen="legacy" id="im-section">

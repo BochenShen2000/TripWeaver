@@ -456,7 +456,8 @@ button:disabled {
   margin-bottom: 2px;
 }
 
-#auth-section {
+#auth-section,
+#account-section {
   background:
     radial-gradient(circle at 96% 8%, rgba(15, 76, 129, 0.08) 0%, transparent 33%),
     radial-gradient(circle at 0% 100%, rgba(207, 143, 29, 0.08) 0%, transparent 35%),
@@ -477,6 +478,17 @@ button:disabled {
 
 .auth-status-row button {
   width: auto;
+}
+
+.account-status-row {
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.account-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .auth-code-form {

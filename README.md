@@ -45,6 +45,7 @@ python3 server.py
 ```
 
 打开 [http://localhost:3000](http://localhost:3000)。
+独立注册/登录页：[http://localhost:3000/auth.html](http://localhost:3000/auth.html)。
 
 ## API
 

@@ -17,6 +17,7 @@ const mapContainer = document.getElementById("route-map");
 const mapStatus = document.getElementById("map-status");
 
 const authStatus = document.getElementById("auth-status");
+const goAuthBtn = document.getElementById("go-auth-btn");
 const registerForm = document.getElementById("register-form");
 const loginForm = document.getElementById("login-form");
 const codeLoginForm = document.getElementById("code-login-form");
@@ -551,10 +552,12 @@ function renderAuthState() {
     authStatus.textContent = `已登录：${currentUser.displayName} (@${currentUser.username})`;
     imSection.classList.remove("hidden");
     logoutBtn.classList.remove("hidden");
+    if (goAuthBtn) goAuthBtn.classList.add("hidden");
   } else {
     authStatus.textContent = "未登录";
     imSection.classList.add("hidden");
     logoutBtn.classList.add("hidden");
+    if (goAuthBtn) goAuthBtn.classList.remove("hidden");
     chatMessages.innerHTML = "";
   }
   if (authQuickPill) {
@@ -646,7 +649,7 @@ function updateFlowCoach() {
       title: "先登录，再开始完整流程",
       desc: "登录后才能发起活动、发送群聊与成团分享。",
       primaryLabel: "去登录",
-      primaryAction: () => navigateToScreen("social", "auth-section"),
+      primaryAction: () => openAuthPage(),
       secondaryLabel: "先去发现",
       secondaryAction: () => jumpToFlowStep("discover"),
     });
@@ -1063,6 +1066,15 @@ function navigateToScreen(screen, sectionId = "") {
   }, 80);
 }
 
+function buildAuthPageUrl() {
+  const currentPath = `${window.location.pathname || "/"}${window.location.search || ""}${window.location.hash || ""}`;
+  return `/auth.html?next=${encodeURIComponent(currentPath || "/")}`;
+}
+
+function openAuthPage() {
+  window.location.href = buildAuthPageUrl();
+}
+
 function jumpToFlowStep(step) {
   if (step === "discover") {
     const panel = getRecommendedExplorePanel();
@@ -1228,7 +1240,7 @@ async function createAndRenderActivityFromPlan(plan, focusPlanScreen = true) {
 async function launchTonightGroup(options = {}) {
   const { seed = null, scene = "" } = options;
   if (!currentUser) {
-    navigateToScreen("social", "auth-section");
+    openAuthPage();
     alert("请先登录后发起今晚成团。");
     return;
   }
@@ -2630,29 +2642,33 @@ function getMockOauthUserId(provider) {
   return value;
 }
 
-registerForm.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const data = Object.fromEntries(new FormData(registerForm).entries());
-  try {
-    const result = await api.register(data);
-    registerForm.reset();
-    await applyAuthSuccess(result, "注册成功，已自动登录。");
-  } catch (err) {
-    alert(`注册失败: ${err.message}`);
-  }
-});
+if (registerForm) {
+  registerForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(registerForm).entries());
+    try {
+      const result = await api.register(data);
+      registerForm.reset();
+      await applyAuthSuccess(result, "注册成功，已自动登录。");
+    } catch (err) {
+      alert(`注册失败: ${err.message}`);
+    }
+  });
+}
 
-loginForm.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const data = Object.fromEntries(new FormData(loginForm).entries());
-  try {
-    const result = await api.login(data);
-    loginForm.reset();
-    await applyAuthSuccess(result, "登录成功。");
-  } catch (err) {
-    alert(`登录失败: ${err.message}`);
-  }
-});
+if (loginForm) {
+  loginForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(loginForm).entries());
+    try {
+      const result = await api.login(data);
+      loginForm.reset();
+      await applyAuthSuccess(result, "登录成功。");
+    } catch (err) {
+      alert(`登录失败: ${err.message}`);
+    }
+  });
+}
 
 if (requestCodeBtn && codeLoginForm) {
   requestCodeBtn.addEventListener("click", async () => {
@@ -2714,26 +2730,34 @@ oauthButtons.forEach((button) => {
   });
 });
 
-logoutBtn.addEventListener("click", () => {
-  if (chatSocket) {
-    chatSocket.disconnect();
-    chatSocket = null;
-  }
-  selectedChatTarget = null;
-  chatThreadTitle.textContent = "选择一个聊天";
-  chatThreadMeta.textContent = "可切换好友私聊 / 群聊";
-  chatThreadMessages.innerHTML = `<div class="meta">登录后开始聊天。</div>`;
-  setAuth("", null);
-  loadPersonalizedRecommendations({ force: true }).catch(() => {});
-  loadTravelPosts().catch(() => {});
-  loadFriendsPanel().catch(() => {});
-  loadCampusGroups().catch(() => {});
-  loadInterestGroups().catch(() => {});
-  loadLocalEvents().catch(() => {});
-  loadInspirations().catch(() => {});
-  loadAggregatedFeed().catch(() => {});
-  loadCollabTrips().catch(() => {});
-});
+if (logoutBtn) {
+  logoutBtn.addEventListener("click", () => {
+    if (chatSocket) {
+      chatSocket.disconnect();
+      chatSocket = null;
+    }
+    selectedChatTarget = null;
+    chatThreadTitle.textContent = "选择一个聊天";
+    chatThreadMeta.textContent = "可切换好友私聊 / 群聊";
+    chatThreadMessages.innerHTML = `<div class="meta">登录后开始聊天。</div>`;
+    setAuth("", null);
+    loadPersonalizedRecommendations({ force: true }).catch(() => {});
+    loadTravelPosts().catch(() => {});
+    loadFriendsPanel().catch(() => {});
+    loadCampusGroups().catch(() => {});
+    loadInterestGroups().catch(() => {});
+    loadLocalEvents().catch(() => {});
+    loadInspirations().catch(() => {});
+    loadAggregatedFeed().catch(() => {});
+    loadCollabTrips().catch(() => {});
+  });
+}
+
+if (goAuthBtn) {
+  goAuthBtn.addEventListener("click", () => {
+    openAuthPage();
+  });
+}
 
 friendRequestForm.addEventListener("submit", async (e) => {
   e.preventDefault();
