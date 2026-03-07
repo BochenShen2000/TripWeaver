@@ -34,12 +34,14 @@
 ## 本地运行
 
 ```bash
-npm install
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 export GOOGLE_MAPS_API_KEY="your_google_maps_api_key"
 export OPENAI_API_KEY="your_openai_api_key"
 export JWT_SECRET="change_this_to_a_long_random_string"
 export OPEN_PUBLISH_KEY="platform_publish_key"
-npm run start
+python3 server.py
 ```
 
 打开 [http://localhost:3000](http://localhost:3000)。
@@ -111,13 +113,13 @@ npm run start
 ## 技术栈
 
 - Frontend: Vanilla HTML/CSS/JS
-- Backend: Node.js + Express
-- Storage: 本地 JSON 文件（运行时在 `data/` 下自动创建）
+- Backend: Python + FastAPI
+- Storage: SQLite（`data/app.db`）
 - Map Rendering: Google Maps JavaScript API
 - Place Validation: Google Places/Geocoding + OpenStreetMap fallback
-- Realtime Query: OpenAI Responses API
-- Auth: JWT + bcryptjs
-- IM: Socket.IO
+- Realtime Query: Google Places Text Search
+- Auth: JWT + bcrypt
+- IM: HTTP polling（前端 Socket.IO 会自动降级）
 - Data Federation: Official + Travel aggregated feed, external publish API
 
 ## MOOK 数据说明

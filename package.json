@@ -2,10 +2,10 @@
   "name": "new-project",
   "version": "1.0.0",
   "description": "",
-  "main": "server.js",
+  "main": "server.py",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node server.js",
+    "start": "python3 server.py",
+    "dev": "python3 server.py",
     "test": "echo \"No tests configured\""
   },
   "keywords": [],
