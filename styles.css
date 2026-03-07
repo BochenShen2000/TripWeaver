@@ -781,9 +781,7 @@ button:disabled {
 }
 
 .activity-launch-form {
-  display: grid;
-  grid-template-columns: 0.78fr 1.22fr;
-  gap: 12px;
+  display: block;
 }
 
 .activity-cover-panel {

@@ -48,6 +48,11 @@ export SMTP_PASS="your_smtp_password"
 export SMTP_FROM="TripWeaver <no-reply@example.com>"
 export SMTP_USE_TLS="true"
 export AUTH_CODE_DEBUG="false"
+export PLACES_HTTP_TIMEOUT_SEC="4.0"
+export OPENAI_HTTP_TIMEOUT_SEC="4.0"
+export DISCOVERY_BUDGET_SEC="7.0"
+export DISCOVERY_MAX_SEED_QUERIES="6"
+export PLACES_CACHE_TTL_SEC="300"
 python3 server.py
 ```
 

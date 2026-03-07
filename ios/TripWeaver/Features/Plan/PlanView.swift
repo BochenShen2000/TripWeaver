@@ -1,6 +1,5 @@
 import SwiftUI
 import MapKit
-import PhotosUI
 import UIKit
 
 private struct CreateActivityBody: Encodable {
@@ -156,9 +155,6 @@ struct PlanView: View {
     @State private var launchTicketPrice = "免费"
     @State private var launchRequiresApproval = false
     @State private var launchAttendeeLimit = "50"
-    @State private var launchTheme = "量子"
-    @State private var launchCoverPickerItem: PhotosPickerItem?
-    @State private var launchCoverImageData: Data?
 
     var body: some View {
         NavigationStack {
@@ -183,12 +179,6 @@ struct PlanView: View {
             }
             .onChange(of: manualInput) { _, value in
                 Task { await loadManualSuggestions(q: value) }
-            }
-            .onChange(of: launchCoverPickerItem) { _, item in
-                Task {
-                    guard let item else { return }
-                    launchCoverImageData = try? await item.loadTransferable(type: Data.self)
-                }
             }
         }
     }
@@ -730,43 +720,18 @@ struct PlanView: View {
 
     @ViewBuilder
     private func activityComposerSection(_ plan: Plan) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                HStack(spacing: 12) {
-                    Text("活动").font(.caption.weight(.bold)).foregroundStyle(.white)
-                    Text("日历").font(.caption.weight(.semibold)).foregroundStyle(.white.opacity(0.78))
-                    Text("发现").font(.caption.weight(.semibold)).foregroundStyle(.white.opacity(0.72))
-                }
-                Spacer()
-                Text(launchCalendar)
-                    .font(.caption2.weight(.semibold))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(.white.opacity(0.16), in: Capsule())
-                Text(launchPrivacy)
-                    .font(.caption2.weight(.semibold))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(.white.opacity(0.16), in: Capsule())
-            }
-
-            if horizontalSizeClass == .regular {
-                HStack(alignment: .top, spacing: 10) {
-                    launchCoverPanel
-                    launchFieldsPanel
-                }
-            } else {
-                launchCoverPanel
-                launchFieldsPanel
-            }
+        VStack(alignment: .leading, spacing: 8) {
+            Text("活动信息")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.86))
+            launchFieldsPanel
         }
         .padding(12)
         .background(
             LinearGradient(
                 colors: [
-                    Color(red: 0.16, green: 0.08, blue: 0.48),
-                    Color(red: 0.20, green: 0.07, blue: 0.58),
-                    Color(red: 0.14, green: 0.18, blue: 0.58),
+                    Color.white.opacity(0.14),
+                    Color.white.opacity(0.08),
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
@@ -782,55 +747,6 @@ struct PlanView: View {
                 launchEndAt = launchStartAt.addingTimeInterval(3600)
             }
         }
-    }
-
-    private var launchCoverPanel: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ZStack {
-                if let data = launchCoverImageData, let uiImage = UIImage(data: data) {
-                    Image(uiImage: uiImage)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(height: horizontalSizeClass == .regular ? 220 : 180)
-                        .clipped()
-                } else {
-                    RoundedRectangle(cornerRadius: 13, style: .continuous)
-                        .fill(launchThemeGradient(launchTheme))
-                        .frame(height: horizontalSizeClass == .regular ? 220 : 180)
-                    VStack(spacing: 6) {
-                        Image(systemName: "face.smiling.inverse")
-                            .font(.system(size: 34, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.9))
-                        Text(launchTheme)
-                            .font(.headline.weight(.bold))
-                            .foregroundStyle(.white)
-                        Text("Route Launch")
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.85))
-                    }
-                }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
-
-            HStack(spacing: 8) {
-                launchMenuField(title: "主题", value: $launchTheme, options: ["量子", "霓虹夜游", "城市漫游", "露营野餐"])
-                Button("换一组") {
-                    let all = ["量子", "霓虹夜游", "城市漫游", "露营野餐"]
-                    let pool = all.filter { $0 != launchTheme }
-                    launchTheme = pool.randomElement() ?? "量子"
-                }
-                .buttonStyle(TWSecondaryButtonStyle())
-                .frame(maxWidth: 110)
-            }
-
-            PhotosPicker(selection: $launchCoverPickerItem, matching: .images, photoLibrary: .shared()) {
-                Label("更换封面", systemImage: "photo")
-                    .font(.caption.weight(.semibold))
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(TWSecondaryButtonStyle())
-        }
-        .frame(maxWidth: horizontalSizeClass == .regular ? 220 : .infinity, alignment: .leading)
     }
 
     private var launchFieldsPanel: some View {
@@ -969,19 +885,6 @@ struct PlanView: View {
         }
     }
 
-    private func launchThemeGradient(_ theme: String) -> LinearGradient {
-        switch theme {
-        case "霓虹夜游":
-            return LinearGradient(colors: [Color(red: 0.18, green: 0.07, blue: 0.49), Color(red: 0.41, green: 0.14, blue: 0.73), Color(red: 0.15, green: 0.43, blue: 0.77)], startPoint: .topLeading, endPoint: .bottomTrailing)
-        case "城市漫游":
-            return LinearGradient(colors: [Color(red: 0.15, green: 0.40, blue: 0.56), Color(red: 0.15, green: 0.62, blue: 0.73), Color(red: 0.50, green: 0.78, blue: 0.85)], startPoint: .topLeading, endPoint: .bottomTrailing)
-        case "露营野餐":
-            return LinearGradient(colors: [Color(red: 0.18, green: 0.43, blue: 0.29), Color(red: 0.27, green: 0.61, blue: 0.37), Color(red: 0.56, green: 0.81, blue: 0.63)], startPoint: .topLeading, endPoint: .bottomTrailing)
-        default:
-            return LinearGradient(colors: [Color(red: 0.31, green: 0.80, blue: 0.89), Color(red: 0.37, green: 0.68, blue: 0.95), Color(red: 0.60, green: 0.48, blue: 0.96)], startPoint: .topLeading, endPoint: .bottomTrailing)
-        }
-    }
-
     private func buildLaunchConfig() -> ActivityLaunchConfigBody {
         let limit = max(1, min(5000, Int(launchAttendeeLimit) ?? 50))
         let formatter = ISO8601DateFormatter()
@@ -997,16 +900,9 @@ struct PlanView: View {
             ticketPrice: launchTicketPrice.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "免费" : launchTicketPrice,
             requiresApproval: launchRequiresApproval,
             attendeeLimit: limit,
-            theme: launchTheme.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "量子" : launchTheme,
-            coverImage: encodedLaunchCoverDataURL()
+            theme: "简约",
+            coverImage: nil
         )
-    }
-
-    private func encodedLaunchCoverDataURL() -> String? {
-        guard let data = launchCoverImageData, !data.isEmpty else { return nil }
-        let maxBytes = 180_000
-        if data.count > maxBytes { return nil }
-        return "data:image/jpeg;base64,\(data.base64EncodedString())"
     }
 
     private func syncLaunchComposer(with plan: Plan, force: Bool) {
