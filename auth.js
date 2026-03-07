@@ -143,20 +143,24 @@ if (requestCodeBtn && codeForm) {
     const identifierInput = codeForm.querySelector('input[name="identifier"]');
     const identifier = String(identifierInput?.value || "").trim();
     if (!identifier) {
-      showMessage("请先输入邮箱或手机号。", "error");
+      showMessage("请先输入邮箱地址。", "error");
       return;
     }
     try {
       requestCodeBtn.disabled = true;
-      const result = await request("/api/auth/request-code", {
+      const result = await request("/api/auth/email/request-code", {
         method: "POST",
-        body: JSON.stringify({ identifier }),
+        body: JSON.stringify({ email: identifier }),
       });
       const codeInput = codeForm.querySelector('input[name="code"]');
       if (codeInput && !codeInput.value && result.debugCode) {
         codeInput.value = result.debugCode;
       }
-      showMessage(`验证码已发送（Demo显示：${result.debugCode}）`, "success");
+      if (result.debugCode) {
+        showMessage(`验证码已发送到 ${result.identifierHint}（调试码：${result.debugCode}）`, "success");
+      } else {
+        showMessage(`验证码已发送到 ${result.identifierHint}，请查收邮箱。`, "success");
+      }
     } catch (err) {
       showMessage(`获取验证码失败：${err.message}`, "error");
     } finally {
@@ -170,14 +174,18 @@ if (codeForm) {
     e.preventDefault();
     const data = Object.fromEntries(new FormData(codeForm).entries());
     try {
-      const result = await request("/api/auth/code-login", {
+      const result = await request("/api/auth/email/code-login", {
         method: "POST",
-        body: JSON.stringify(data),
+        body: JSON.stringify({
+          email: data.identifier,
+          code: data.code,
+          displayName: data.displayName || "",
+        }),
       });
       codeForm.reset();
-      await onAuthSuccess(result, result.created ? "验证码注册成功，正在进入应用..." : "验证码登录成功，正在进入应用...");
+      await onAuthSuccess(result, result.created ? "邮箱验证码注册成功，正在进入应用..." : "邮箱验证码登录成功，正在进入应用...");
     } catch (err) {
-      showMessage(`验证码登录失败：${err.message}`, "error");
+      showMessage(`邮箱验证码登录失败：${err.message}`, "error");
     }
   });
 }

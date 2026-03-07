@@ -3,7 +3,7 @@ import SwiftUI
 private enum AuthMode: String, CaseIterable, Identifiable {
     case login = "登录"
     case register = "注册"
-    case code = "验证码"
+    case code = "邮箱验证码"
 
     var id: String { rawValue }
 }
@@ -21,11 +21,11 @@ private struct RegisterBody: Encodable {
 }
 
 private struct RequestCodeBody: Encodable {
-    let identifier: String
+    let email: String
 }
 
 private struct CodeLoginBody: Encodable {
-    let identifier: String
+    let email: String
     let code: String
     let displayName: String
 }
@@ -50,7 +50,7 @@ private struct CampusVerifyResponse: Decodable {
 
 private struct RequestCodeResponse: Decodable {
     let identifierHint: String
-    let debugCode: String
+    let debugCode: String?
 }
 
 private struct AuthInputField: View {
@@ -129,7 +129,7 @@ struct AuthView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("TripWeaver")
                     .font(.title2.weight(.bold))
-                Text("支持密码、验证码、第三方快捷登录")
+                Text("支持密码、邮箱验证码、第三方快捷登录")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -148,7 +148,7 @@ struct AuthView: View {
                     keyboard: .URL,
                     noAutoCorrect: true
                 )
-                Text("部署到公网时必须使用 https://；本地开发可用 http://127.0.0.1:3000")
+                Text("优先使用 https://；如服务仅支持 HTTP，可填写 http://IP:端口（需 ATS 放宽生效）")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -278,7 +278,7 @@ struct AuthView: View {
                     .disabled(loading)
 
                 case .code:
-                    AuthInputField(placeholder: "邮箱或手机号", text: $codeIdentifier, noAutoCorrect: true)
+                    AuthInputField(placeholder: "邮箱地址", text: $codeIdentifier, keyboard: .emailAddress, noAutoCorrect: true)
                     AuthInputField(placeholder: "验证码", text: $codeValue)
                     AuthInputField(placeholder: "首次登录昵称（可选）", text: $codeDisplayName)
 
@@ -289,7 +289,7 @@ struct AuthView: View {
                         .buttonStyle(TWSecondaryButtonStyle())
                         .disabled(loading)
 
-                        Button(loading ? "登录中..." : "验证码登录") {
+                        Button(loading ? "登录中..." : "邮箱验证码登录/注册") {
                             Task { await codeLogin() }
                         }
                         .buttonStyle(TWPrimaryButtonStyle())
@@ -406,12 +406,16 @@ struct AuthView: View {
         do {
             let result: RequestCodeResponse = try await APIClient.request(
                 baseURL: session.apiBaseURL,
-                path: "/api/auth/request-code",
+                path: "/api/auth/email/request-code",
                 method: .post,
-                body: RequestCodeBody(identifier: codeIdentifier)
+                body: RequestCodeBody(email: codeIdentifier)
             )
-            codeValue = result.debugCode
-            session.message = "验证码已发送到 \(result.identifierHint)（Demo: \(result.debugCode)）"
+            if let debugCode = result.debugCode, !debugCode.isEmpty {
+                codeValue = debugCode
+                session.message = "验证码已发送到 \(result.identifierHint)（调试码：\(debugCode)）"
+            } else {
+                session.message = "验证码已发送到 \(result.identifierHint)，请查收邮箱。"
+            }
         } catch {
             session.message = "验证码发送失败：\(error.localizedDescription)"
         }
@@ -423,10 +427,10 @@ struct AuthView: View {
         do {
             let auth: AuthResponse = try await APIClient.request(
                 baseURL: session.apiBaseURL,
-                path: "/api/auth/code-login",
+                path: "/api/auth/email/code-login",
                 method: .post,
                 body: CodeLoginBody(
-                    identifier: codeIdentifier,
+                    email: codeIdentifier,
                     code: codeValue,
                     displayName: codeDisplayName
                 )
@@ -434,7 +438,7 @@ struct AuthView: View {
             session.applyAuth(auth)
             syncCampusFields()
         } catch {
-            session.message = "验证码登录失败：\(error.localizedDescription)"
+            session.message = "邮箱验证码登录失败：\(error.localizedDescription)"
         }
     }
 

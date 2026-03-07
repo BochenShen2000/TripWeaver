@@ -17,7 +17,7 @@
       <section class="auth-brand-panel">
         <p class="brand-eyebrow">TripWeaver</p>
         <h1>登录后继续你的旅行路线与社交流程</h1>
-        <p class="brand-desc">支持密码登录、验证码登录、第三方快捷登录。登录成功后自动返回你刚才的页面。</p>
+        <p class="brand-desc">支持密码登录、邮箱验证码注册/登录、第三方快捷登录。登录成功后自动返回你刚才的页面。</p>
         <ul class="brand-list">
           <li>路线与地图同步</li>
           <li>好友与群聊联动</li>
@@ -36,7 +36,7 @@
         <nav class="auth-tabs" aria-label="登录方式">
           <button class="auth-tab-btn active" type="button" data-auth-tab="login">密码登录</button>
           <button class="auth-tab-btn" type="button" data-auth-tab="register">注册</button>
-          <button class="auth-tab-btn" type="button" data-auth-tab="code">验证码登录</button>
+          <button class="auth-tab-btn" type="button" data-auth-tab="code">邮箱验证码</button>
         </nav>
 
         <form id="auth-login-form" class="auth-form" data-auth-panel="login">
@@ -73,8 +73,8 @@
 
         <form id="auth-code-form" class="auth-form hidden" data-auth-panel="code">
           <label>
-            邮箱或手机号
-            <input name="identifier" placeholder="输入邮箱或手机号" required />
+            邮箱
+            <input name="identifier" type="email" placeholder="输入邮箱地址" required />
           </label>
           <div class="auth-inline">
             <label>
@@ -87,7 +87,7 @@
             首次登录昵称（可选）
             <input name="displayName" placeholder="新用户可填写" />
           </label>
-          <button class="btn-primary" type="submit">验证码登录</button>
+          <button class="btn-primary" type="submit">邮箱验证码登录/注册</button>
         </form>
 
         <section class="oauth-wrap">

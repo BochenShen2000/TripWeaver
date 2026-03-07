@@ -176,7 +176,14 @@ struct DiscoveryPlace: Codable, Identifiable {
 }
 
 struct APIErrorResponse: Codable {
-    let error: String
+    let error: String?
+    let detail: String?
+
+    var message: String? {
+        if let error, !error.isEmpty { return error }
+        if let detail, !detail.isEmpty { return detail }
+        return nil
+    }
 }
 
 struct ChatMessage: Codable, Identifiable {

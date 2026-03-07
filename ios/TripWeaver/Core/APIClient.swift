@@ -15,7 +15,7 @@ enum APIError: LocalizedError {
         case .server(let message):
             return message
         case .secureConnectionRequired:
-            return "iOS 安全策略阻止了不安全连接，请使用 HTTPS 后端地址（本地调试可用 http://127.0.0.1:3000）"
+            return "iOS 安全策略阻止了当前连接；请优先使用 HTTPS，或在 Xcode 中确认 ATS 放宽配置已生效后再使用 HTTP。"
         }
     }
 }
@@ -68,8 +68,9 @@ struct APIClient {
             return try JSONDecoder().decode(T.self, from: data)
         }
 
-        if let err = try? JSONDecoder().decode(APIErrorResponse.self, from: data) {
-            throw APIError.server(err.error)
+        if let err = try? JSONDecoder().decode(APIErrorResponse.self, from: data),
+           let message = err.message {
+            throw APIError.server(message)
         }
 
         throw APIError.server("请求失败 (\(http.statusCode))")
@@ -99,12 +100,14 @@ struct APIClient {
             return trimTrailingSlash(from: candidate)
         }
 
-        if components.scheme?.lowercased() == "http" && !isLocalHost(host) {
-            components.scheme = "https"
-        }
-
-        if !hadScheme && isLocalHost(host) {
-            components.scheme = "http"
+        if !hadScheme {
+            if isLocalHost(host) {
+                components.scheme = "http"
+            } else if isIPAddress(host) {
+                components.scheme = "http"
+            } else {
+                components.scheme = "https"
+            }
         }
 
         let normalized = components.string ?? candidate
@@ -128,6 +131,17 @@ struct APIClient {
             let parts = lower.split(separator: ".")
             if parts.count >= 2, let second = Int(parts[1]), (16...31).contains(second) {
                 return true
+            }
+        }
+        return false
+    }
+
+    private static func isIPAddress(_ host: String) -> Bool {
+        let v4 = host.split(separator: ".")
+        if v4.count == 4 {
+            return v4.allSatisfy { part in
+                guard let value = Int(part), part.allSatisfy({ $0.isNumber }) else { return false }
+                return (0...255).contains(value)
             }
         }
         return false

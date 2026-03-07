@@ -310,15 +310,20 @@ const api = {
     });
   },
   requestAuthCode(payload) {
-    return this.request("/api/auth/request-code", {
+    const email = String(payload?.email || payload?.identifier || "").trim();
+    return this.request("/api/auth/email/request-code", {
       method: "POST",
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ email }),
     });
   },
   codeLogin(payload) {
-    return this.request("/api/auth/code-login", {
+    return this.request("/api/auth/email/code-login", {
       method: "POST",
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        email: payload?.email || payload?.identifier || "",
+        code: payload?.code || "",
+        displayName: payload?.displayName || "",
+      }),
     });
   },
   oauthLoginMock(payload) {
@@ -3160,17 +3165,21 @@ if (requestCodeBtn && codeLoginForm) {
     const identifierInput = codeLoginForm.querySelector('input[name="identifier"]');
     const identifier = String(identifierInput?.value || "").trim();
     if (!identifier) {
-      alert("请先输入邮箱或手机号。");
+      alert("请先输入邮箱地址。");
       return;
     }
     try {
       requestCodeBtn.disabled = true;
-      const result = await api.requestAuthCode({ identifier });
+      const result = await api.requestAuthCode({ email: identifier });
       const codeInput = codeLoginForm.querySelector('input[name="code"]');
       if (codeInput && !codeInput.value && result.debugCode) {
         codeInput.value = result.debugCode;
       }
-      alert(`验证码已发送到 ${result.identifierHint}（Demo显示：${result.debugCode}，10分钟内有效）。`);
+      if (result.debugCode) {
+        alert(`验证码已发送到 ${result.identifierHint}（调试码：${result.debugCode}，10分钟内有效）。`);
+      } else {
+        alert(`验证码已发送到 ${result.identifierHint}，请查收邮箱（10分钟内有效）。`);
+      }
     } catch (err) {
       alert(`获取验证码失败: ${err.message}`);
     } finally {
@@ -3184,11 +3193,15 @@ if (codeLoginForm) {
     e.preventDefault();
     const data = Object.fromEntries(new FormData(codeLoginForm).entries());
     try {
-      const result = await api.codeLogin(data);
+      const result = await api.codeLogin({
+        email: data.identifier,
+        code: data.code,
+        displayName: data.displayName || "",
+      });
       codeLoginForm.reset();
-      await applyAuthSuccess(result, result.created ? "验证码注册并登录成功。" : "验证码登录成功。");
+      await applyAuthSuccess(result, result.created ? "邮箱验证码注册并登录成功。" : "邮箱验证码登录成功。");
     } catch (err) {
-      alert(`验证码登录失败: ${err.message}`);
+      alert(`邮箱验证码登录失败: ${err.message}`);
     }
   });
 }

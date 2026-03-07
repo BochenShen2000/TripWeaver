@@ -41,6 +41,13 @@ export GOOGLE_MAPS_API_KEY="your_google_maps_api_key"
 export OPENAI_API_KEY="your_openai_api_key"
 export JWT_SECRET="change_this_to_a_long_random_string"
 export OPEN_PUBLISH_KEY="platform_publish_key"
+export SMTP_HOST="smtp.example.com"
+export SMTP_PORT="587"
+export SMTP_USER="no-reply@example.com"
+export SMTP_PASS="your_smtp_password"
+export SMTP_FROM="TripWeaver <no-reply@example.com>"
+export SMTP_USE_TLS="true"
+export AUTH_CODE_DEBUG="false"
 python3 server.py
 ```
 
@@ -71,6 +78,8 @@ open TripWeaveriOS.xcodeproj
 - `POST /api/auth/login`
 - `POST /api/auth/request-code`
 - `POST /api/auth/code-login`
+- `POST /api/auth/email/request-code`
+- `POST /api/auth/email/code-login`
 - `POST /api/auth/oauth/mock`
 - `GET /api/auth/me`
 - `POST /api/campus/verify`
