@@ -252,12 +252,14 @@
             <input name="country" placeholder="国家（如 Singapore）" required />
             <input name="description" placeholder="社群介绍" />
             <label>
-              <span>仅校园认证用户可见</span>
-              <select name="campusOnly">
-                <option value="false">否</option>
-                <option value="true">是</option>
+              <span>可见范围</span>
+              <select name="visibility">
+                <option value="public">公开可见</option>
+                <option value="campus">同个学校可见</option>
+                <option value="invite">仅邀请</option>
               </select>
             </label>
+            <input name="inviteUsernames" placeholder="仅邀请时可填：用户名，逗号分隔（可选）" />
             <button type="submit" class="btn-primary">创建兴趣社群</button>
           </form>
         </details>
@@ -350,7 +352,30 @@
       </section>
 
       <section class="card mobile-screen-section" data-screen="social" id="social-section">
-        <h2>好友 + 群聊（WhatsApp 风格）</h2>
+        <div class="section-head-row">
+          <h2>好友 + 群聊（WhatsApp 风格）</h2>
+          <button id="chat-create-interest-toggle-btn" type="button" class="chat-create-plus-btn" aria-label="创建兴趣群">+</button>
+        </div>
+        <details id="chat-create-interest-panel" class="explore-compose-card hidden">
+          <summary class="explore-compose-toggle">创建兴趣群</summary>
+          <form id="chat-interest-create-form" class="travel-form">
+            <input name="name" placeholder="社群名（如 Tokyo Boardgame Night）" required />
+            <input name="interest" placeholder="兴趣（如 桌游 / 露营 / 聚餐）" required />
+            <input name="city" placeholder="城市" required />
+            <input name="country" placeholder="国家" required />
+            <input name="description" placeholder="社群介绍（可选）" />
+            <label>
+              <span>可见范围</span>
+              <select name="visibility">
+                <option value="public">公开可见</option>
+                <option value="campus">同个学校可见</option>
+                <option value="invite">仅邀请</option>
+              </select>
+            </label>
+            <input name="inviteUsernames" placeholder="仅邀请时可填：用户名，逗号分隔（可选）" />
+            <button type="submit" class="btn-primary">创建并刷新群聊列表</button>
+          </form>
+        </details>
         <form id="friend-request-form" class="chat-form">
           <input name="toUsername" placeholder="输入用户名发送好友请求" required />
           <button type="submit" class="btn-primary">加好友</button>
@@ -548,89 +573,16 @@
       <section id="plan-section" class="card hidden mobile-screen-section" data-screen="plan">
         <h2>2) 结构化活动方案</h2>
         <article id="plan-output" class="plan"></article>
-        <div class="actions">
-          <button id="open-activity-create-btn" type="button" class="btn-primary">进入创建活动页</button>
-          <button id="tonight-group-btn" type="button" class="btn-secondary">今晚就去成团</button>
+        <div class="quick-launch-inline">
+          <label for="quick-activity-privacy">活动可见性</label>
+          <select id="quick-activity-privacy">
+            <option value="私密" selected>私密</option>
+            <option value="公开">公开（所有人可在发现看到）</option>
+          </select>
         </div>
-      </section>
-
-      <section id="activity-create-section" class="card hidden mobile-screen-section" data-screen="plan">
-        <h2>3) 创建活动</h2>
-        <p class="meta">完善时间、地点与活动规则，再一键发起并分享。</p>
-        <section id="activity-launch-composer" class="activity-launch-composer" aria-label="活动创建器">
-          <form id="activity-launch-form" class="activity-launch-form">
-            <div class="activity-fields-panel">
-              <div class="activity-compact-row">
-                <label>
-                  日历
-                  <select id="activity-calendar" name="calendar">
-                    <option value="个人日历" selected>个人日历</option>
-                    <option value="社群日历">社群日历</option>
-                    <option value="校园日历">校园日历</option>
-                  </select>
-                </label>
-                <label>
-                  可见性
-                  <select id="activity-privacy" name="privacy">
-                    <option value="私密" selected>私密</option>
-                    <option value="好友可见">好友可见</option>
-                    <option value="公开">公开</option>
-                  </select>
-                </label>
-              </div>
-
-              <label>
-                活动名称
-                <input id="activity-title" name="title" placeholder="活动名称" required />
-              </label>
-
-              <div class="activity-time-grid">
-                <label>
-                  开始
-                  <input id="activity-start-at" name="startAt" type="datetime-local" required />
-                </label>
-                <label>
-                  结束
-                  <input id="activity-end-at" name="endAt" type="datetime-local" required />
-                </label>
-                <label>
-                  时区
-                  <input id="activity-timezone" name="timezone" value="GMT+08:00 新加坡" />
-                </label>
-              </div>
-
-              <label>
-                添加活动地点
-                <input id="activity-venue" name="venueName" placeholder="线下地点或线上链接" />
-              </label>
-
-              <label>
-                添加描述
-                <textarea id="activity-description" name="description" rows="3" placeholder="介绍活动亮点、成团氛围和注意事项"></textarea>
-              </label>
-
-              <div class="activity-options-list">
-                <h3>活动选项</h3>
-                <label class="activity-option-row">
-                  <span>门票价格</span>
-                  <input id="activity-ticket-price" name="ticketPrice" value="免费" />
-                </label>
-                <label class="activity-option-row toggle">
-                  <span>需要审核</span>
-                  <input id="activity-require-approval" name="requiresApproval" type="checkbox" />
-                </label>
-                <label class="activity-option-row">
-                  <span>人数限制</span>
-                  <input id="activity-limit" name="attendeeLimit" type="number" min="1" max="5000" value="50" />
-                </label>
-              </div>
-
-              <button id="create-activity" type="submit" class="btn-primary">创建活动</button>
-            </div>
-          </form>
-        </section>
         <div class="actions">
-          <button id="back-plan-btn" type="button" class="btn-secondary">返回路线方案</button>
+          <button id="open-activity-create-btn" type="button" class="btn-primary">一键创建活动</button>
+          <button id="tonight-group-btn" type="button" class="btn-secondary">今晚就去成团</button>
         </div>
       </section>
 
