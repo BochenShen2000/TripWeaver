@@ -94,6 +94,8 @@ open TripWeaveriOS.xcodeproj
 
 ## API
 
+详细前后端联调文档见：[docs/API_INTEGRATION.md](docs/API_INTEGRATION.md)
+
 - `GET /api/health`
 - `GET /api/maps-config`
 - `POST /api/auth/register`
