@@ -24,7 +24,7 @@
 
 /* Begin PBXFileReference section */
 		176D6A54C5F064FEBCF14BD4 /* ChatThreadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatThreadView.swift; sourceTree = "<group>"; };
-		1DB49E14D2DA3EFD57C385F9 /* TripWeaveriOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = TripWeaveriOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		1DB49E14D2DA3EFD57C385F9 /* TripWeaver.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TripWeaver.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4A42338472D02002276991E2 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		53D69FD5F22377B86108D758 /* SocialView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocialView.swift; sourceTree = "<group>"; };
 		58E66CB4907167141BD24C67 /* AuthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthView.swift; sourceTree = "<group>"; };
@@ -74,7 +74,7 @@
 		54AD9701D85B710954879FCE /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				1DB49E14D2DA3EFD57C385F9 /* TripWeaveriOS.app */,
+				1DB49E14D2DA3EFD57C385F9 /* TripWeaver.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -166,7 +166,7 @@
 			packageProductDependencies = (
 			);
 			productName = TripWeaveriOS;
-			productReference = 1DB49E14D2DA3EFD57C385F9 /* TripWeaveriOS.app */;
+			productReference = 1DB49E14D2DA3EFD57C385F9 /* TripWeaver.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -177,8 +177,6 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
-				TargetAttributes = {
-				};
 			};
 			buildConfigurationList = 6A61CFDA1459B56D13C8E465 /* Build configuration list for PBXProject "TripWeaveriOS" */;
 			developmentRegion = en;
@@ -238,6 +236,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = 796F243FF8;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = TripWeaver/Resources/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -256,6 +255,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = 796F243FF8;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = TripWeaver/Resources/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
