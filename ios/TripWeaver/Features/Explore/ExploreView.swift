@@ -25,7 +25,7 @@ private enum ExploreLocationError: LocalizedError {
 }
 
 @MainActor
-private final class ExploreLocationManager: NSObject, CLLocationManagerDelegate {
+private final class ExploreLocationManager: NSObject, CLLocationManagerDelegate, ObservableObject {
     private let manager = CLLocationManager()
     private var continuation: CheckedContinuation<CLLocationCoordinate2D, Error>?
 

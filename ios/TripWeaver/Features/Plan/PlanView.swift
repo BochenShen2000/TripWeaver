@@ -149,7 +149,7 @@ private enum PlanLocationError: LocalizedError {
 }
 
 @MainActor
-private final class PlanLocationManager: NSObject, CLLocationManagerDelegate {
+private final class PlanLocationManager: NSObject, CLLocationManagerDelegate, ObservableObject {
     private let manager = CLLocationManager()
     private var continuation: CheckedContinuation<CLLocationCoordinate2D, Error>?
 

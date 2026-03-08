@@ -75,6 +75,23 @@ xcodegen generate
 open TripWeaveriOS.xcodeproj
 ```
 
+## Android 前端（Jetpack Compose）
+
+- 工程目录：`android/`
+- 包名：`com.tripweaver.android`
+- 页面结构与 iOS 对齐：`路线 / 发现 / 聊天 / 账号` 四个 Tab
+- 已接入能力：
+  - 路线生成（含 GPS 定位、国家和地区/城市选择、手动地点、生成结果地图）
+  - 发现页（即将路线、社群入口、真实地点搜索、推荐、地图）
+  - 聊天页（好友私聊/社群/活动会话、兴趣群发布下次活动、活动地图卡片）
+  - 账号页（密码登录、注册、邮箱验证码、OAuth Mock、校园认证、后端地址配置）
+
+> 首次导入前，请在 `android/local.properties` 添加 Google Maps Key：
+>
+> `MAPS_API_KEY=你的安卓地图key`
+
+在 Android Studio 中打开 `android/` 目录即可同步并运行。
+
 ## API
 
 - `GET /api/health`
