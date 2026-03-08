@@ -436,6 +436,13 @@
 - `POST /api/inspirations`
 - `POST /api/inspirations/{post_id}/like`
 
+`POST /api/inspirations` 关键字段（新增媒体支持）：
+- `title` `content` `city` `country`（必填）
+- `tags` `places`（可选）
+- `coverImageUrl`（可选，HTTP/HTTPS）
+- `photoUrls`（可选，数组或逗号/换行分隔字符串）
+- `videoLinks`（可选，仅支持 B 站 / YouTube 链接，数组或逗号/换行分隔字符串）
+
 ### 11.2 官方发布
 - `POST /api/official/posts`
 - `GET /api/official/posts`
@@ -502,4 +509,3 @@
 4. `GET /api/interest/groups` -> `POST /join` -> `GET/POST /messages`
 5. `POST /api/interest/groups/{id}/activities`（验证群聊活动卡）
 6. `GET /api/discovery/places`（验证真实地点）
-

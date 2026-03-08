@@ -207,7 +207,30 @@
         </form>
         <div class="actions">
           <button id="intent-generate-fast-btn" type="button" class="btn-secondary">按当前预设一键生成</button>
+          <button id="open-manual-route-btn" type="button" class="btn-secondary">手动添加路线</button>
         </div>
+      </section>
+
+      <section class="card hidden mobile-screen-section" data-screen="plan" id="manual-route-section">
+        <h2>1.5) 手动添加路线（Web）</h2>
+        <p class="meta">逐站填写地点与时间，完成后回填到路线方案并可一键发起活动。</p>
+        <div class="actions">
+          <button id="manual-route-back-btn" type="button" class="btn-secondary">返回路线生成</button>
+        </div>
+        <form id="manual-route-form" class="travel-form">
+          <input id="manual-route-title" name="title" placeholder="路线标题（如 东京2日桌游+展）" required />
+          <input id="manual-route-city" name="city" placeholder="城市" required />
+          <input id="manual-route-country" name="country" placeholder="国家和地区" required />
+          <textarea id="manual-route-note" name="note" rows="2" class="full-span" placeholder="路线说明（可选）"></textarea>
+          <div class="full-span">
+            <div class="section-head-row">
+              <h3>路线站点</h3>
+              <button id="manual-route-add-stop-btn" type="button" class="btn-secondary">新增一站</button>
+            </div>
+            <div id="manual-route-stops" class="manual-route-stops"></div>
+          </div>
+          <button type="submit" class="btn-primary full-span">完成并回填到路线页</button>
+        </form>
       </section>
 
       <section class="card mobile-screen-section" data-screen="account" id="account-section">
@@ -332,6 +355,19 @@
             <input name="country" placeholder="国家" required />
             <input name="tags" placeholder="标签（逗号分隔）" />
             <input name="places" placeholder="地点（逗号分隔）" />
+            <input name="coverImageUrl" placeholder="封面图链接（可选）" />
+            <textarea
+              name="photoUrls"
+              class="full-span"
+              rows="2"
+              placeholder="照片链接（可选，支持多条，换行或逗号分隔）"
+            ></textarea>
+            <textarea
+              name="videoLinks"
+              class="full-span"
+              rows="2"
+              placeholder="旅行视频链接（可选，仅支持 B站 / YouTube，多条可换行）"
+            ></textarea>
             <textarea name="content" rows="3" placeholder="攻略内容 / 体验总结" required></textarea>
             <button type="submit" class="btn-primary">发布灵感</button>
           </form>

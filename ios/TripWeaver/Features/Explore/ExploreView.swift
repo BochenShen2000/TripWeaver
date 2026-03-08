@@ -1,6 +1,18 @@
 import SwiftUI
 import CoreLocation
 
+private struct CreateInspirationBody: Encodable {
+    let title: String
+    let city: String
+    let country: String
+    let tags: [String]
+    let places: [String]
+    let coverImageUrl: String?
+    let photoUrls: [String]
+    let videoLinks: [String]
+    let content: String
+}
+
 private struct ExploreDestinationPreset: Identifiable {
     let country: String
     let cities: [String]
@@ -111,6 +123,15 @@ struct ExploreView: View {
     @State private var upcomingRoutes: [DiscoveryRouteEvent] = []
     @State private var interestGroups: [InterestGroup] = []
     @State private var campusGroups: [CampusGroup] = []
+    @State private var inspirations: [InspirationPost] = []
+
+    @State private var inspirationTitle = ""
+    @State private var inspirationTags = ""
+    @State private var inspirationPlaces = ""
+    @State private var inspirationCoverUrl = ""
+    @State private var inspirationPhotos = ""
+    @State private var inspirationVideos = ""
+    @State private var inspirationContent = ""
 
     @State private var loading = false
     @State private var message = ""
@@ -127,6 +148,7 @@ struct ExploreView: View {
                     upcomingRoutesCard
                     groupChatsCard
                     queryCard
+                    inspirationCard
                     actionCard
 
                     if !places.isEmpty {
@@ -354,6 +376,107 @@ struct ExploreView: View {
                             )
                             .buttonStyle(.plain)
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    private var inspirationCard: some View {
+        TWCard {
+            VStack(alignment: .leading, spacing: 9) {
+                Text("灵感分享（照片 + B站/YouTube）")
+                    .font(.headline)
+                field("标题（如：东京5天路线）", text: $inspirationTitle)
+                HStack(spacing: 8) {
+                    field("标签（逗号分隔）", text: $inspirationTags)
+                    field("地点（逗号分隔）", text: $inspirationPlaces)
+                }
+                field("封面图链接（可选）", text: $inspirationCoverUrl)
+                TextField("照片链接（可选，多条用逗号或换行）", text: $inspirationPhotos, axis: .vertical)
+                    .lineLimit(2...4)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(Color.white.opacity(0.9), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                TextField("视频链接（可选，仅 B站 / YouTube）", text: $inspirationVideos, axis: .vertical)
+                    .lineLimit(2...4)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(Color.white.opacity(0.9), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                TextField("攻略内容 / 体验总结", text: $inspirationContent, axis: .vertical)
+                    .lineLimit(2...5)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(Color.white.opacity(0.9), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+
+                HStack(spacing: 8) {
+                    Button("发布灵感") {
+                        Task { await createInspiration() }
+                    }
+                    .buttonStyle(TWSecondaryButtonStyle())
+                    .disabled(session.token.isEmpty)
+
+                    Button("刷新灵感") {
+                        Task { await loadInspirations() }
+                    }
+                    .buttonStyle(TWSecondaryButtonStyle())
+                }
+
+                if inspirations.isEmpty {
+                    Text("暂无灵感内容。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(inspirations.prefix(5)) { item in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(item.title)
+                                .font(.subheadline.weight(.semibold))
+                            Text("\(item.city ?? "") \(item.country ?? "") · 点赞 \(item.likes?.count ?? 0)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            if let content = item.content, !content.isEmpty {
+                                Text(content)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(3)
+                            }
+
+                            let photoUrls = normalizedPhotoURLs(item.photoUrls ?? [], cover: item.coverImageUrl)
+                            if !photoUrls.isEmpty {
+                                ScrollView(.horizontal, showsIndicators: false) {
+                                    HStack(spacing: 7) {
+                                        ForEach(photoUrls.prefix(4), id: \.self) { url in
+                                            AsyncImage(url: URL(string: url)) { phase in
+                                                switch phase {
+                                                case .success(let image):
+                                                    image.resizable().scaledToFill()
+                                                default:
+                                                    Color.white.opacity(0.55)
+                                                }
+                                            }
+                                            .frame(width: 88, height: 66)
+                                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                        }
+                                    }
+                                }
+                            }
+
+                            let videos = normalizedVideoLinks(item.videoLinks ?? [])
+                            if !videos.isEmpty {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    ForEach(videos.prefix(2), id: \.url) { video in
+                                        if let url = URL(string: video.url) {
+                                            Link(video.platform == "bilibili" ? "打开 B站 视频" : "打开 YouTube 视频", destination: url)
+                                                .font(.caption)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 9)
+                        .background(Color.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
                     }
                 }
             }
@@ -625,6 +748,7 @@ struct ExploreView: View {
         await loadUpcomingRoutes()
         await loadInterestGroups()
         await loadCampusGroups()
+        await loadInspirations()
     }
 
     private func loadUpcomingRoutes() async {
@@ -734,6 +858,128 @@ struct ExploreView: View {
         } catch {
             message = error.localizedDescription
         }
+    }
+
+    private func loadInspirations() async {
+        do {
+            var comps = URLComponents(string: "/api/inspirations")
+            comps?.queryItems = [
+                URLQueryItem(name: "city", value: city),
+                URLQueryItem(name: "country", value: country),
+            ]
+            let path = comps?.string ?? "/api/inspirations"
+            let result: [InspirationPost] = try await APIClient.request(
+                baseURL: session.apiBaseURL,
+                path: path,
+                token: session.token
+            )
+            inspirations = result
+        } catch {
+            inspirations = []
+        }
+    }
+
+    private func createInspiration() async {
+        guard !session.token.isEmpty else {
+            message = "请先登录后再发布灵感"
+            return
+        }
+        let title = inspirationTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let content = inspirationContent.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, !content.isEmpty else {
+            message = "请填写标题与内容"
+            return
+        }
+        let normalizedCity = city.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedCountry = country.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedCity.isEmpty, !normalizedCountry.isEmpty else {
+            message = "请先选择城市和国家和地区"
+            return
+        }
+        let photos = normalizedPhotoURLs(parseCSVOrLines(inspirationPhotos), cover: normalizeURL(inspirationCoverUrl))
+        let videos = normalizedVideoLinks(parseCSVOrLines(inspirationVideos).map { InspirationVideoLink(url: $0, platform: nil) })
+        let body = CreateInspirationBody(
+            title: title,
+            city: normalizedCity,
+            country: normalizedCountry,
+            tags: parseCSVOrLines(inspirationTags),
+            places: parseCSVOrLines(inspirationPlaces),
+            coverImageUrl: normalizeURL(inspirationCoverUrl).isEmpty ? nil : normalizeURL(inspirationCoverUrl),
+            photoUrls: photos,
+            videoLinks: videos.map(\.url),
+            content: content
+        )
+        do {
+            let _: InspirationPost = try await APIClient.request(
+                baseURL: session.apiBaseURL,
+                path: "/api/inspirations",
+                method: .post,
+                token: session.token,
+                body: body
+            )
+            inspirationTitle = ""
+            inspirationTags = ""
+            inspirationPlaces = ""
+            inspirationCoverUrl = ""
+            inspirationPhotos = ""
+            inspirationVideos = ""
+            inspirationContent = ""
+            message = "灵感已发布"
+            await loadInspirations()
+        } catch {
+            message = error.localizedDescription
+        }
+    }
+
+    private func parseCSVOrLines(_ raw: String) -> [String] {
+        raw
+            .split(whereSeparator: { $0 == "," || $0 == "，" || $0 == "\n" || $0 == "；" || $0 == ";" })
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    private func normalizeURL(_ value: String) -> String {
+        let text = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: text), let scheme = url.scheme?.lowercased(), (scheme == "http" || scheme == "https"), url.host != nil else {
+            return ""
+        }
+        return text
+    }
+
+    private func normalizedPhotoURLs(_ values: [String], cover: String?) -> [String] {
+        var out: [String] = []
+        let items = (cover.map { [$0] } ?? []) + values
+        for item in items {
+            let clean = normalizeURL(item)
+            guard !clean.isEmpty else { continue }
+            if !out.contains(where: { $0.caseInsensitiveCompare(clean) == .orderedSame }) {
+                out.append(clean)
+            }
+            if out.count >= 9 { break }
+        }
+        return out
+    }
+
+    private func normalizedVideoLinks(_ values: [InspirationVideoLink]) -> [InspirationVideoLink] {
+        var out: [InspirationVideoLink] = []
+        for item in values {
+            let clean = normalizeURL(item.url)
+            guard !clean.isEmpty else { continue }
+            let lower = clean.lowercased()
+            let platform: String?
+            if lower.contains("youtube.com") || lower.contains("youtu.be") {
+                platform = "youtube"
+            } else if lower.contains("bilibili.com") || lower.contains("b23.tv") {
+                platform = "bilibili"
+            } else {
+                continue
+            }
+            if !out.contains(where: { $0.url.caseInsensitiveCompare(clean) == .orderedSame }) {
+                out.append(InspirationVideoLink(url: clean, platform: platform))
+            }
+            if out.count >= 4 { break }
+        }
+        return out
     }
 
     private func formatDateTime(_ iso: String?) -> String {

@@ -155,6 +155,30 @@ data class DiscoveryPlace(
 )
 
 @Serializable
+data class InspirationVideoLink(
+    val url: String,
+    val platform: String? = null,
+)
+
+@Serializable
+data class InspirationPost(
+    val id: String,
+    val title: String,
+    val content: String? = null,
+    val city: String? = null,
+    val country: String? = null,
+    val tags: List<String>? = null,
+    val places: List<String>? = null,
+    val photoUrls: List<String>? = null,
+    val videoLinks: List<InspirationVideoLink>? = null,
+    val coverImageUrl: String? = null,
+    val source: String? = null,
+    val creator: AuthUser? = null,
+    val likes: List<String>? = null,
+    val createdAt: String? = null,
+)
+
+@Serializable
 data class ChatGeo(
     val lat: Double? = null,
     val lng: Double? = null,

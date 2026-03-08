@@ -27,6 +27,7 @@ import androidx.navigation.navArgument
 import com.tripweaver.android.core.SessionStore
 import com.tripweaver.android.features.account.AccountScreen
 import com.tripweaver.android.features.explore.ExploreScreen
+import com.tripweaver.android.features.plan.ManualRouteScreen
 import com.tripweaver.android.features.plan.PlanScreen
 import com.tripweaver.android.features.social.ChatThreadScreen
 import com.tripweaver.android.features.social.ChatThreadType
@@ -80,7 +81,22 @@ fun TripWeaverApp(session: SessionStore) {
                 modifier = Modifier.padding(padding),
             ) {
                 composable("plan") {
-                    PlanScreen(session = session)
+                    PlanScreen(
+                        session = session,
+                        onOpenManualRoute = {
+                            navController.navigate("plan/manual")
+                        },
+                    )
+                }
+                composable("plan/manual") {
+                    ManualRouteScreen(
+                        session = session,
+                        onBack = { navController.popBackStack() },
+                        onComplete = { plan ->
+                            session.setPendingManualPlan(plan)
+                            navController.popBackStack()
+                        },
+                    )
                 }
                 composable("explore") {
                     ExploreScreen(

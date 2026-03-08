@@ -315,3 +315,25 @@ struct EventGeo: Codable {
     let lat: Double?
     let lng: Double?
 }
+
+struct InspirationVideoLink: Codable {
+    let url: String
+    let platform: String?
+}
+
+struct InspirationPost: Codable, Identifiable {
+    let id: String
+    let title: String
+    let content: String?
+    let city: String?
+    let country: String?
+    let tags: [String]?
+    let places: [String]?
+    let photoUrls: [String]?
+    let videoLinks: [InspirationVideoLink]?
+    let coverImageUrl: String?
+    let source: String?
+    let creator: AuthUser?
+    let likes: [String]?
+    let createdAt: String?
+}

@@ -12,6 +12,7 @@ from datetime import date, datetime, timedelta, timezone
 from email.message import EmailMessage
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import parse_qs, urlparse
 
 import bcrypt
 import jwt
@@ -893,6 +894,132 @@ def parse_tags(value: Any, limit: int = 12) -> List[str]:
     if isinstance(value, list):
         return [normalize_text(v) for v in value if normalize_text(v)][:limit]
     return [p.strip() for p in str(value or "").split(",") if p.strip()][:limit]
+
+
+def parse_text_list(value: Any, limit: int = 12) -> List[str]:
+    if isinstance(value, list):
+        items = []
+        for v in value:
+            if isinstance(v, dict):
+                items.append(normalize_text(v.get("url") or v.get("link") or v.get("value")))
+            else:
+                items.append(normalize_text(v))
+    else:
+        raw = str(value or "")
+        items = [normalize_text(v) for v in re.split(r"[\n,\uFF0C;；]+", raw)]
+    out: List[str] = []
+    seen: set = set()
+    for item in items:
+        if not item:
+            continue
+        key = normalize_key(item)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def normalize_public_url(value: Any) -> str:
+    text = normalize_text(value)
+    if not text:
+        return ""
+    if len(text) > 1000:
+        return ""
+    try:
+        parsed = urlparse(text)
+    except Exception:
+        return ""
+    if parsed.scheme.lower() not in {"http", "https"}:
+        return ""
+    if not normalize_text(parsed.netloc):
+        return ""
+    return text
+
+
+def parse_photo_urls(value: Any, limit: int = 9) -> List[str]:
+    urls = parse_text_list(value, limit=max(3, limit * 2))
+    out: List[str] = []
+    seen: set = set()
+    for item in urls:
+        clean = normalize_public_url(item)
+        if not clean:
+            continue
+        key = normalize_key(clean)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(clean)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def normalize_video_link(value: Any) -> Optional[Dict[str, str]]:
+    clean = normalize_public_url(value)
+    if not clean:
+        return None
+    parsed = urlparse(clean)
+    host = normalize_key(parsed.netloc)
+    path = parsed.path or ""
+    query = parse_qs(parsed.query or "")
+
+    if "youtu.be" in host:
+        video_id = path.strip("/").split("/")[0] if path.strip("/") else ""
+        if video_id:
+            return {"url": f"https://www.youtube.com/watch?v={video_id}", "platform": "youtube"}
+        return None
+
+    if "youtube.com" in host:
+        video_id = ""
+        if path.startswith("/watch"):
+            vals = query.get("v") or []
+            video_id = normalize_text(vals[0]) if vals else ""
+        elif path.startswith("/shorts/"):
+            video_id = normalize_text(path.split("/shorts/")[-1].split("/")[0])
+        elif path.startswith("/embed/"):
+            video_id = normalize_text(path.split("/embed/")[-1].split("/")[0])
+        if video_id:
+            return {"url": f"https://www.youtube.com/watch?v={video_id}", "platform": "youtube"}
+        return None
+
+    if "bilibili.com" in host:
+        # e.g. /video/BVxxxx 或 /video/avxxxx
+        segs = [normalize_text(x) for x in path.split("/") if normalize_text(x)]
+        if "video" in segs:
+            idx = segs.index("video")
+            vid = segs[idx + 1] if idx + 1 < len(segs) else ""
+            if vid:
+                return {"url": f"https://www.bilibili.com/video/{vid}", "platform": "bilibili"}
+        return None
+
+    if "b23.tv" in host:
+        token = normalize_text(path.strip("/").split("/")[0])
+        if token:
+            return {"url": f"https://b23.tv/{token}", "platform": "bilibili"}
+        return None
+
+    return None
+
+
+def parse_video_links(value: Any, limit: int = 4) -> List[Dict[str, str]]:
+    raw_items = parse_text_list(value, limit=max(3, limit * 3))
+    out: List[Dict[str, str]] = []
+    seen: set = set()
+    for raw in raw_items:
+        normalized = normalize_video_link(raw)
+        if not normalized:
+            continue
+        key = normalize_key(normalized.get("url"))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(normalized)
+        if len(out) >= limit:
+            break
+    return out
 
 
 def parse_geo(value: Any) -> Optional[Dict[str, Any]]:
@@ -3592,8 +3719,37 @@ def get_inspirations(city: str = "", country: str = "", tag: str = "", q: str = 
         posts = [p for p in posts if any(key in normalize_key(t) for t in (p.get("tags") or []))]
     if q:
         key = normalize_key(q)
-        posts = [p for p in posts if key in normalize_key(f"{p.get('title', '')} {p.get('content', '')}")]
-    return posts
+        posts = [
+            p
+            for p in posts
+            if key
+            in normalize_key(
+                " ".join(
+                    [
+                        str(p.get("title", "")),
+                        str(p.get("content", "")),
+                        " ".join(p.get("photoUrls") if isinstance(p.get("photoUrls"), list) else []),
+                        " ".join(
+                            [
+                                str(x.get("url", ""))
+                                for x in (p.get("videoLinks") if isinstance(p.get("videoLinks"), list) else [])
+                                if isinstance(x, dict)
+                            ]
+                        ),
+                    ]
+                )
+            )
+        ]
+    normalized: List[Dict[str, Any]] = []
+    for p in posts:
+        item = dict(p)
+        photos = parse_photo_urls(item.get("photoUrls") or item.get("photos") or item.get("images"), limit=9)
+        videos = parse_video_links(item.get("videoLinks") or item.get("videos"), limit=4)
+        item["photoUrls"] = photos
+        item["videoLinks"] = videos
+        item["coverImageUrl"] = normalize_public_url(item.get("coverImageUrl")) or (photos[0] if photos else "")
+        normalized.append(item)
+    return normalized
 
 
 @app.post("/api/inspirations")
@@ -3604,6 +3760,11 @@ def create_inspiration(payload: Dict[str, Any], user: Dict[str, Any] = Depends(a
     country = normalize_text(payload.get("country"))
     if not title or not content or not city or not country:
         raise HTTPException(status_code=400, detail="title, content, city, country are required.")
+    photo_urls = parse_photo_urls(payload.get("photoUrls") or payload.get("photos") or payload.get("images"), limit=9)
+    cover = normalize_public_url(payload.get("coverImageUrl"))
+    if cover and all(normalize_key(cover) != normalize_key(x) for x in photo_urls):
+        photo_urls.insert(0, cover)
+    video_links = parse_video_links(payload.get("videoLinks") or payload.get("videos"), limit=4)
     post = {
         "id": new_id("INS"),
         "title": title,
@@ -3612,6 +3773,9 @@ def create_inspiration(payload: Dict[str, Any], user: Dict[str, Any] = Depends(a
         "country": country,
         "tags": parse_tags(payload.get("tags")),
         "places": parse_tags(payload.get("places"), limit=20),
+        "photoUrls": photo_urls,
+        "videoLinks": video_links,
+        "coverImageUrl": photo_urls[0] if photo_urls else "",
         "source": normalize_text(payload.get("source") or "user"),
         "creator": to_public_user(user),
         "likes": [],
@@ -3734,6 +3898,11 @@ def open_publish(payload: Dict[str, Any], request: Request) -> Dict[str, Any]:
         country = normalize_text(payload.get("country"))
         if not title or not content or not city or not country:
             raise HTTPException(status_code=400, detail="title, content, city, country are required.")
+        photo_urls = parse_photo_urls(payload.get("photoUrls") or payload.get("photos") or payload.get("images"), limit=9)
+        cover = normalize_public_url(payload.get("coverImageUrl"))
+        if cover and all(normalize_key(cover) != normalize_key(x) for x in photo_urls):
+            photo_urls.insert(0, cover)
+        video_links = parse_video_links(payload.get("videoLinks") or payload.get("videos"), limit=4)
         post = {
             "id": new_id("INS"),
             "title": title,
@@ -3741,7 +3910,10 @@ def open_publish(payload: Dict[str, Any], request: Request) -> Dict[str, Any]:
             "city": city,
             "country": country,
             "tags": parse_tags(payload.get("tags")),
-            "places": [],
+            "places": parse_tags(payload.get("places"), limit=20),
+            "photoUrls": photo_urls,
+            "videoLinks": video_links,
+            "coverImageUrl": photo_urls[0] if photo_urls else "",
             "source": normalize_text(payload.get("source") or "external"),
             "creator": {"id": "external", "username": "external_platform", "displayName": "External Platform"},
             "likes": [],

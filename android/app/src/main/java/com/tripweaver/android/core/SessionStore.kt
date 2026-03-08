@@ -7,6 +7,7 @@ import androidx.compose.runtime.setValue
 import com.tripweaver.android.model.AuthResponse
 import com.tripweaver.android.model.AuthUser
 import com.tripweaver.android.model.MeResponse
+import com.tripweaver.android.model.Plan
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -22,6 +23,7 @@ class SessionStore(context: Context) {
     var apiBaseUrl by mutableStateOf(prefs.getString(KEY_BASE_URL, "http://127.0.0.1:3000").orEmpty())
         private set
     var message by mutableStateOf("")
+    var pendingManualPlan by mutableStateOf<Plan?>(null)
 
     val isLoggedIn: Boolean
         get() = token.isNotBlank() && user != null
@@ -41,8 +43,13 @@ class SessionStore(context: Context) {
     fun logout() {
         token = ""
         user = null
+        pendingManualPlan = null
         prefs.edit().remove(KEY_TOKEN).apply()
         message = "已退出登录"
+    }
+
+    fun setPendingManualPlan(plan: Plan?) {
+        pendingManualPlan = plan
     }
 
     fun bootstrap(scope: CoroutineScope) {

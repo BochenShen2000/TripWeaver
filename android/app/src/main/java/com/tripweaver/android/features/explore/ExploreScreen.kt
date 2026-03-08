@@ -37,6 +37,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
 import com.google.android.gms.location.LocationServices
 import com.tripweaver.android.core.ApiClient
@@ -45,6 +46,7 @@ import com.tripweaver.android.features.social.ChatThreadType
 import com.tripweaver.android.model.CampusGroup
 import com.tripweaver.android.model.DiscoveryPlace
 import com.tripweaver.android.model.DiscoveryRouteEvent
+import com.tripweaver.android.model.InspirationPost
 import com.tripweaver.android.model.InterestGroup
 import com.tripweaver.android.model.RouteStop
 import com.tripweaver.android.ui.TwCard
@@ -53,8 +55,22 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
 import java.text.SimpleDateFormat
 import java.util.Locale
+
+@Serializable
+private data class CreateInspirationBody(
+    val title: String,
+    val city: String,
+    val country: String,
+    val tags: List<String> = emptyList(),
+    val places: List<String> = emptyList(),
+    val coverImageUrl: String? = null,
+    val photoUrls: List<String> = emptyList(),
+    val videoLinks: List<String> = emptyList(),
+    val content: String,
+)
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -63,6 +79,7 @@ fun ExploreScreen(
     onOpenChat: (type: ChatThreadType, id: String, title: String, subtitle: String, joined: Boolean) -> Unit,
 ) {
     val context = LocalContext.current
+    val uriHandler = LocalUriHandler.current
     val scope = rememberCoroutineScope()
     val fused = remember { LocationServices.getFusedLocationProviderClient(context) }
 
@@ -89,6 +106,15 @@ fun ExploreScreen(
     val interestGroups = remember { mutableStateListOf<InterestGroup>() }
     val campusGroups = remember { mutableStateListOf<CampusGroup>() }
     val places = remember { mutableStateListOf<DiscoveryPlace>() }
+    val inspirations = remember { mutableStateListOf<InspirationPost>() }
+
+    var inspirationTitle by remember { mutableStateOf("") }
+    var inspirationTags by remember { mutableStateOf("") }
+    var inspirationPlaces by remember { mutableStateOf("") }
+    var inspirationCoverUrl by remember { mutableStateOf("") }
+    var inspirationPhotoUrls by remember { mutableStateOf("") }
+    var inspirationVideoLinks by remember { mutableStateOf("") }
+    var inspirationContent by remember { mutableStateOf("") }
 
     var loading by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
@@ -107,12 +133,17 @@ fun ExploreScreen(
                 val igPath = "/api/interest/groups?" + ApiClient.query(
                     mapOf("city" to city, "country" to country),
                 )
+                val insPath = "/api/inspirations?" + ApiClient.query(
+                    mapOf("city" to city, "country" to country),
+                )
                 val up = ApiClient.get<List<DiscoveryRouteEvent>>(base, upPath, token)
                 val ig = ApiClient.get<List<InterestGroup>>(base, igPath, token)
                 val cg = runCatching { ApiClient.get<List<CampusGroup>>(base, "/api/campus/groups", token) }.getOrDefault(emptyList())
+                val ins = runCatching { ApiClient.get<List<InspirationPost>>(base, insPath, token) }.getOrDefault(emptyList())
                 upcomingRoutes.clear(); upcomingRoutes.addAll(up)
                 interestGroups.clear(); interestGroups.addAll(ig)
                 campusGroups.clear(); campusGroups.addAll(cg)
+                inspirations.clear(); inspirations.addAll(ins)
                 message = "发现流已刷新"
             } catch (e: Exception) {
                 message = e.message ?: "加载失败"
@@ -142,6 +173,110 @@ fun ExploreScreen(
                 message = if (recommend) "已返回推荐 ${data.size} 条" else "找到 ${data.size} 个地点"
             } catch (e: Exception) {
                 message = e.message ?: "搜索失败"
+            } finally {
+                loading = false
+            }
+        }
+    }
+
+    fun parseListInput(raw: String): List<String> {
+        return raw
+            .split(Regex("[\\n,，;；]+"))
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+    }
+
+    fun normalizeHttpUrl(raw: String): String {
+        val text = raw.trim()
+        if (text.isEmpty()) return ""
+        return runCatching {
+            val uri = java.net.URI(text)
+            val scheme = (uri.scheme ?: "").lowercase()
+            if ((scheme == "http" || scheme == "https") && !uri.host.isNullOrBlank()) text else ""
+        }.getOrDefault("")
+    }
+
+    fun normalizePhotoUrls(raw: String, cover: String): List<String> {
+        val pool = mutableListOf<String>()
+        val normalizedCover = normalizeHttpUrl(cover)
+        if (normalizedCover.isNotEmpty()) pool.add(normalizedCover)
+        pool.addAll(parseListInput(raw).map(::normalizeHttpUrl).filter { it.isNotEmpty() })
+        return pool
+            .distinctBy { it.lowercase() }
+            .take(9)
+    }
+
+    fun normalizeVideoUrls(raw: String): List<String> {
+        return parseListInput(raw)
+            .map(::normalizeHttpUrl)
+            .filter { it.isNotEmpty() }
+            .filter {
+                val lower = it.lowercase()
+                lower.contains("youtube.com") || lower.contains("youtu.be") || lower.contains("bilibili.com") || lower.contains("b23.tv")
+            }
+            .distinctBy { it.lowercase() }
+            .take(4)
+    }
+
+    fun loadInspirations() {
+        scope.launch {
+            try {
+                val path = "/api/inspirations?" + ApiClient.query(
+                    mapOf("city" to city, "country" to country),
+                )
+                val data = ApiClient.get<List<InspirationPost>>(session.apiBaseUrl, path, session.token.ifBlank { null })
+                inspirations.clear(); inspirations.addAll(data)
+            } catch (_: Exception) {
+                inspirations.clear()
+            }
+        }
+    }
+
+    fun createInspiration() {
+        scope.launch {
+            if (session.token.isBlank()) {
+                message = "请先登录后发布灵感"
+                return@launch
+            }
+            val title = inspirationTitle.trim()
+            val content = inspirationContent.trim()
+            val normalizedCity = city.trim()
+            val normalizedCountry = country.trim()
+            if (title.isEmpty() || content.isEmpty() || normalizedCity.isEmpty() || normalizedCountry.isEmpty()) {
+                message = "请填写标题、内容、城市和国家和地区"
+                return@launch
+            }
+            loading = true
+            try {
+                val cover = normalizeHttpUrl(inspirationCoverUrl)
+                val body = CreateInspirationBody(
+                    title = title,
+                    city = normalizedCity,
+                    country = normalizedCountry,
+                    tags = parseListInput(inspirationTags).take(12),
+                    places = parseListInput(inspirationPlaces).take(20),
+                    coverImageUrl = cover.ifBlank { null },
+                    photoUrls = normalizePhotoUrls(inspirationPhotoUrls, cover),
+                    videoLinks = normalizeVideoUrls(inspirationVideoLinks),
+                    content = content,
+                )
+                ApiClient.post<InspirationPost, CreateInspirationBody>(
+                    baseUrl = session.apiBaseUrl,
+                    path = "/api/inspirations",
+                    body = body,
+                    token = session.token.ifBlank { null },
+                )
+                inspirationTitle = ""
+                inspirationTags = ""
+                inspirationPlaces = ""
+                inspirationCoverUrl = ""
+                inspirationPhotoUrls = ""
+                inspirationVideoLinks = ""
+                inspirationContent = ""
+                message = "灵感已发布"
+                loadInspirations()
+            } catch (e: Exception) {
+                message = e.message ?: "发布失败"
             } finally {
                 loading = false
             }
@@ -304,6 +439,124 @@ fun ExploreScreen(
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                         Button(onClick = { searchPlaces(recommend = false) }, enabled = !loading, modifier = Modifier.weight(1f)) { Text("搜索真实地点") }
                         Button(onClick = { searchPlaces(recommend = true) }, enabled = !loading && session.token.isNotBlank(), modifier = Modifier.weight(1f)) { Text("猜你想去") }
+                    }
+                }
+            }
+        }
+
+        item {
+            TwCard {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("灵感分享（照片 + B站/YouTube）")
+                    OutlinedTextField(
+                        value = inspirationTitle,
+                        onValueChange = { inspirationTitle = it },
+                        label = { Text("标题") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        OutlinedTextField(
+                            value = inspirationTags,
+                            onValueChange = { inspirationTags = it },
+                            label = { Text("标签（逗号分隔）") },
+                            modifier = Modifier.weight(1f),
+                        )
+                        OutlinedTextField(
+                            value = inspirationPlaces,
+                            onValueChange = { inspirationPlaces = it },
+                            label = { Text("地点（逗号分隔）") },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    OutlinedTextField(
+                        value = inspirationCoverUrl,
+                        onValueChange = { inspirationCoverUrl = it },
+                        label = { Text("封面图链接（可选）") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = inspirationPhotoUrls,
+                        onValueChange = { inspirationPhotoUrls = it },
+                        label = { Text("照片链接（多条可换行/逗号）") },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2,
+                    )
+                    OutlinedTextField(
+                        value = inspirationVideoLinks,
+                        onValueChange = { inspirationVideoLinks = it },
+                        label = { Text("视频链接（仅 B站/YouTube）") },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2,
+                    )
+                    OutlinedTextField(
+                        value = inspirationContent,
+                        onValueChange = { inspirationContent = it },
+                        label = { Text("攻略内容") },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        Button(onClick = { createInspiration() }, enabled = !loading, modifier = Modifier.weight(1f)) {
+                            Text("发布灵感")
+                        }
+                        Button(onClick = { loadInspirations() }, enabled = !loading, modifier = Modifier.weight(1f)) {
+                            Text("刷新灵感")
+                        }
+                    }
+                    if (inspirations.isEmpty()) {
+                        Text("暂无灵感内容")
+                    } else {
+                        inspirations.take(5).forEach { post ->
+                            val coverUrl = normalizeHttpUrl(post.coverImageUrl.orEmpty())
+                            val photoUrls = buildList {
+                                if (coverUrl.isNotEmpty()) add(coverUrl)
+                                post.photoUrls
+                                    .orEmpty()
+                                    .map(::normalizeHttpUrl)
+                                    .filter { it.isNotEmpty() }
+                                    .forEach { url ->
+                                        if (none { it.equals(url, ignoreCase = true) }) add(url)
+                                    }
+                            }.take(6)
+                            val videoLinks = post.videoLinks
+                                .orEmpty()
+                                .mapNotNull { item ->
+                                    val clean = normalizeHttpUrl(item.url)
+                                    if (clean.isEmpty()) {
+                                        null
+                                    } else {
+                                        clean to (item.platform ?: if (clean.lowercase().contains("bili")) "bilibili" else "youtube")
+                                    }
+                                }
+                                .distinctBy { it.first.lowercase() }
+                                .take(3)
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.fillMaxWidth()) {
+                                Text(post.title)
+                                Text("${post.city.orEmpty()} ${post.country.orEmpty()} · 点赞 ${post.likes?.size ?: 0}")
+                                post.content?.takeIf { it.isNotBlank() }?.let { Text(it) }
+                                val mediaMeta = "图片 ${photoUrls.size} 张 · 视频 ${videoLinks.size} 条"
+                                Text(mediaMeta)
+                                if (photoUrls.isNotEmpty()) {
+                                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        photoUrls.forEachIndexed { idx, url ->
+                                            TextButton(onClick = { runCatching { uriHandler.openUri(url) } }) {
+                                                Text("查看图片 ${idx + 1}")
+                                            }
+                                        }
+                                    }
+                                }
+                                if (videoLinks.isNotEmpty()) {
+                                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        videoLinks.forEach { (url, platform) ->
+                                            val label = if (platform.lowercase().contains("bili")) "打开 B站视频" else "打开 YouTube 视频"
+                                            TextButton(onClick = { runCatching { uriHandler.openUri(url) } }) {
+                                                Text(label)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

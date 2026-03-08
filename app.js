@@ -13,6 +13,16 @@ const manualPlaceAddBtn = document.getElementById("manual-place-add-btn");
 const manualMapPinBtn = document.getElementById("manual-map-pin-btn");
 const manualPlaceList = document.getElementById("manual-place-list");
 const manualPlaceSuggestions = document.getElementById("manual-place-suggestions");
+const openManualRouteBtn = document.getElementById("open-manual-route-btn");
+const manualRouteSection = document.getElementById("manual-route-section");
+const manualRouteBackBtn = document.getElementById("manual-route-back-btn");
+const manualRouteForm = document.getElementById("manual-route-form");
+const manualRouteTitleInput = document.getElementById("manual-route-title");
+const manualRouteCityInput = document.getElementById("manual-route-city");
+const manualRouteCountryInput = document.getElementById("manual-route-country");
+const manualRouteNoteInput = document.getElementById("manual-route-note");
+const manualRouteAddStopBtn = document.getElementById("manual-route-add-stop-btn");
+const manualRouteStops = document.getElementById("manual-route-stops");
 const planSection = document.getElementById("plan-section");
 const planOutput = document.getElementById("plan-output");
 const quickActivityPrivacySelect = document.getElementById("quick-activity-privacy");
@@ -175,6 +185,9 @@ let manualMapPinMode = false;
 let manualMapClickListener = null;
 let manualSuggestTimer = null;
 let activityCoverDataUrl = "";
+let manualRouteDraftStops = [];
+let manualRouteStopSeed = 1;
+let manualRouteVerifyingStopId = "";
 
 let authToken = localStorage.getItem("auth_token") || "";
 let currentUser = null;
@@ -1523,6 +1536,345 @@ function deriveAreaFromCityCountry(city, country) {
   return [c, k].filter(Boolean).join(", ");
 }
 
+function formatLocalDateTimeInput(date = new Date()) {
+  const d = date instanceof Date && !Number.isNaN(date.getTime()) ? date : new Date();
+  const y = d.getFullYear();
+  const m = `${d.getMonth() + 1}`.padStart(2, "0");
+  const day = `${d.getDate()}`.padStart(2, "0");
+  const hh = `${d.getHours()}`.padStart(2, "0");
+  const mm = `${d.getMinutes()}`.padStart(2, "0");
+  return `${y}-${m}-${day}T${hh}:${mm}`;
+}
+
+function splitLocalDateTime(value = "") {
+  const text = String(value || "").trim();
+  if (!text) return { date: "", time: "" };
+  if (!text.includes("T")) return { date: "", time: "" };
+  const [datePart, timePart] = text.split("T");
+  return { date: String(datePart || "").trim(), time: String(timePart || "").trim().slice(0, 5) };
+}
+
+function normalizeManualRouteCoord(value) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function createManualRouteStop(seed = {}) {
+  const now = Date.now();
+  const fallbackAt = new Date(now + Math.max(0, manualRouteDraftStops.length) * 90 * 60 * 1000);
+  const dateTime = String(seed.dateTime || "").trim() || formatLocalDateTimeInput(fallbackAt);
+  return {
+    id: String(seed.id || `mrs_${Date.now()}_${manualRouteStopSeed++}`),
+    point: String(seed.point || "").trim(),
+    matchedName: String(seed.matchedName || "").trim(),
+    dateTime,
+    intro: String(seed.intro || "").trim(),
+    recommendReason: String(seed.recommendReason || "").trim(),
+    lat: normalizeManualRouteCoord(seed.lat),
+    lng: normalizeManualRouteCoord(seed.lng),
+    googleMapsUri: String(seed.googleMapsUri || "").trim(),
+    verified: Boolean(seed.verified),
+  };
+}
+
+function ensureManualRouteDraftInitialized(forceReset = false) {
+  if (!manualRouteForm) return;
+  if (!forceReset && manualRouteDraftStops.length) return;
+  const city = getIntentCityValue() || "Singapore";
+  const country = getIntentCountryValue() || "Singapore";
+  const intentDate = String(intentStartDatetimeInput?.value || "").trim();
+  const firstDate = intentDate || formatLocalDateTimeInput(new Date(Date.now() + 2 * 60 * 60 * 1000));
+  let secondDate = "";
+  if (firstDate) {
+    const firstMs = new Date(firstDate).getTime();
+    if (Number.isFinite(firstMs)) {
+      secondDate = formatLocalDateTimeInput(new Date(firstMs + 90 * 60 * 1000));
+    }
+  }
+  if (!secondDate) {
+    secondDate = formatLocalDateTimeInput(new Date(Date.now() + 3.5 * 60 * 60 * 1000));
+  }
+
+  if (manualRouteTitleInput) manualRouteTitleInput.value = "我的旅行路线";
+  if (manualRouteCityInput) manualRouteCityInput.value = city;
+  if (manualRouteCountryInput) manualRouteCountryInput.value = country;
+  if (manualRouteNoteInput) manualRouteNoteInput.value = "";
+
+  manualRouteDraftStops = [
+    createManualRouteStop({ point: "", dateTime: firstDate }),
+    createManualRouteStop({ point: "", dateTime: secondDate }),
+  ];
+  renderManualRouteStops();
+}
+
+function toggleManualRouteSection(show) {
+  if (!manualRouteSection) return;
+  manualRouteSection.classList.toggle("hidden", !show);
+}
+
+function renderManualRouteStops() {
+  if (!manualRouteStops) return;
+  if (!manualRouteDraftStops.length) {
+    manualRouteStops.innerHTML = `<div class="meta">还没有站点，点击“新增一站”开始。</div>`;
+    return;
+  }
+  manualRouteStops.innerHTML = manualRouteDraftStops
+    .map((stop, index) => {
+      const coord = Number.isFinite(stop.lat) && Number.isFinite(stop.lng) ? `${Number(stop.lat).toFixed(4)}, ${Number(stop.lng).toFixed(4)}` : "未标注坐标";
+      const verifyLabel = manualRouteVerifyingStopId === stop.id ? "校验中..." : "校验真实地点";
+      return `
+        <article class="manual-route-stop-card" data-manual-stop-id="${escapeHtml(stop.id)}">
+          <div class="manual-route-stop-head">
+            <strong>第 ${index + 1} 站 · ${escapeHtml(coord)}</strong>
+            <div class="manual-route-stop-actions">
+              <button type="button" class="btn-secondary" data-stop-action="up" data-stop-id="${escapeHtml(stop.id)}" ${index === 0 ? "disabled" : ""}>上移</button>
+              <button type="button" class="btn-secondary" data-stop-action="down" data-stop-id="${escapeHtml(stop.id)}" ${index === manualRouteDraftStops.length - 1 ? "disabled" : ""}>下移</button>
+              <button type="button" class="btn-secondary" data-stop-action="verify" data-stop-id="${escapeHtml(stop.id)}">${verifyLabel}</button>
+              <button type="button" class="btn-secondary" data-stop-action="remove" data-stop-id="${escapeHtml(stop.id)}">删除</button>
+            </div>
+          </div>
+          <div class="manual-route-grid">
+            <label>
+              地点名
+              <input type="text" data-stop-field="point" data-stop-id="${escapeHtml(stop.id)}" value="${escapeHtml(stop.point)}" placeholder="如：Shibuya Sky" />
+            </label>
+            <label>
+              到达时间
+              <input type="datetime-local" data-stop-field="dateTime" data-stop-id="${escapeHtml(stop.id)}" value="${escapeHtml(stop.dateTime)}" />
+            </label>
+            <label>
+              纬度
+              <input type="number" step="0.000001" data-stop-field="lat" data-stop-id="${escapeHtml(stop.id)}" value="${Number.isFinite(stop.lat) ? stop.lat : ""}" placeholder="可选" />
+            </label>
+            <label>
+              经度
+              <input type="number" step="0.000001" data-stop-field="lng" data-stop-id="${escapeHtml(stop.id)}" value="${Number.isFinite(stop.lng) ? stop.lng : ""}" placeholder="可选" />
+            </label>
+          </div>
+          <label>
+            地点介绍
+            <textarea rows="2" data-stop-field="intro" data-stop-id="${escapeHtml(stop.id)}" placeholder="这一站有什么亮点">${escapeHtml(stop.intro || "")}</textarea>
+          </label>
+          <label>
+            推荐理由
+            <textarea rows="2" data-stop-field="recommendReason" data-stop-id="${escapeHtml(stop.id)}" placeholder="为什么值得去">${escapeHtml(
+              stop.recommendReason || "",
+            )}</textarea>
+          </label>
+        </article>
+      `;
+    })
+    .join("");
+}
+
+function updateManualRouteStopField(stopId, field, rawValue) {
+  const idx = manualRouteDraftStops.findIndex((item) => item.id === stopId);
+  if (idx < 0) return;
+  if (field === "lat" || field === "lng") {
+    const normalized = String(rawValue || "").trim();
+    manualRouteDraftStops[idx][field] = normalized ? normalizeManualRouteCoord(normalized) : null;
+    if (!(Number.isFinite(manualRouteDraftStops[idx].lat) && Number.isFinite(manualRouteDraftStops[idx].lng))) {
+      manualRouteDraftStops[idx].verified = false;
+    }
+    return;
+  }
+  manualRouteDraftStops[idx][field] = String(rawValue || "");
+}
+
+function moveManualRouteStop(stopId, direction) {
+  const idx = manualRouteDraftStops.findIndex((item) => item.id === stopId);
+  if (idx < 0) return;
+  const target = direction === "up" ? idx - 1 : idx + 1;
+  if (target < 0 || target >= manualRouteDraftStops.length) return;
+  const item = manualRouteDraftStops.splice(idx, 1)[0];
+  manualRouteDraftStops.splice(target, 0, item);
+  renderManualRouteStops();
+}
+
+async function verifyManualRouteStop(stopId) {
+  const idx = manualRouteDraftStops.findIndex((item) => item.id === stopId);
+  if (idx < 0) return;
+  const stop = manualRouteDraftStops[idx];
+  const point = String(stop.point || "").trim();
+  const city = String(manualRouteCityInput?.value || "").trim();
+  const country = String(manualRouteCountryInput?.value || "").trim();
+  if (!point) {
+    showToast("请先填写地点名。", "error");
+    return;
+  }
+  manualRouteVerifyingStopId = stopId;
+  renderManualRouteStops();
+  try {
+    const places = await api.discoverPlaces({
+      q: point,
+      city,
+      country,
+      limit: 1,
+    });
+    const best = Array.isArray(places) ? places[0] : null;
+    if (!best) throw new Error("未找到匹配地点");
+    manualRouteDraftStops[idx] = {
+      ...manualRouteDraftStops[idx],
+      point: String(best.point || point).trim(),
+      matchedName: String(best.matchedName || "").trim(),
+      intro: String(manualRouteDraftStops[idx].intro || "").trim() || String(best.intro || "").trim(),
+      recommendReason: String(manualRouteDraftStops[idx].recommendReason || "").trim() || String(best.recommendReason || "").trim(),
+      lat: Number.isFinite(Number(best.lat)) ? Number(best.lat) : manualRouteDraftStops[idx].lat,
+      lng: Number.isFinite(Number(best.lng)) ? Number(best.lng) : manualRouteDraftStops[idx].lng,
+      googleMapsUri: String(best.googleMapsUri || manualRouteDraftStops[idx].googleMapsUri || "").trim(),
+      verified: true,
+    };
+    showToast(`已校验：${manualRouteDraftStops[idx].point}`, "success");
+  } catch (err) {
+    showToast(`校验失败：${err.message || "未找到匹配地点"}`, "error");
+  } finally {
+    manualRouteVerifyingStopId = "";
+    renderManualRouteStops();
+  }
+}
+
+function routeDateTimeToDate(step) {
+  const day = String(step?.date || "").trim();
+  const hm = String(step?.time || "").trim();
+  if (!day) return null;
+  const text = hm ? `${day}T${hm}:00` : `${day}T00:00:00`;
+  const parsed = new Date(text);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function distanceKmBetween(lat1, lng1, lat2, lng2) {
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return 6371 * c;
+}
+
+function buildManualRouteSummary(route = []) {
+  let distanceKm = 0;
+  let hasDistance = false;
+  for (let i = 1; i < route.length; i += 1) {
+    const prev = route[i - 1];
+    const next = route[i];
+    if (!Number.isFinite(prev.lat) || !Number.isFinite(prev.lng) || !Number.isFinite(next.lat) || !Number.isFinite(next.lng)) continue;
+    distanceKm += distanceKmBetween(prev.lat, prev.lng, next.lat, next.lng);
+    hasDistance = true;
+  }
+  let durationMin = null;
+  const first = routeDateTimeToDate(route[0]);
+  const last = routeDateTimeToDate(route[route.length - 1]);
+  if (first && last && last > first) {
+    durationMin = Math.round((last.getTime() - first.getTime()) / 60000);
+  }
+  if (!hasDistance && !Number.isFinite(durationMin)) return null;
+  return {
+    distanceKm: hasDistance ? Number(distanceKm.toFixed(2)) : null,
+    durationMin: Number.isFinite(durationMin) ? durationMin : null,
+  };
+}
+
+function buildManualRoutePlanPayload() {
+  const title = String(manualRouteTitleInput?.value || "").trim();
+  const city = String(manualRouteCityInput?.value || "").trim();
+  const country = String(manualRouteCountryInput?.value || "").trim();
+  const note = String(manualRouteNoteInput?.value || "").trim();
+  if (!title) throw new Error("请填写路线标题。");
+  if (!city || !country) throw new Error("请填写城市和国家和地区。");
+
+  const route = manualRouteDraftStops
+    .map((stop) => {
+      const point = String(stop.point || "").trim();
+      if (!point) return null;
+      const dt = splitLocalDateTime(stop.dateTime);
+      const lat = Number.isFinite(stop.lat) ? Number(stop.lat) : null;
+      const lng = Number.isFinite(stop.lng) ? Number(stop.lng) : null;
+      const mapsUri =
+        String(stop.googleMapsUri || "").trim() ||
+        (Number.isFinite(lat) && Number.isFinite(lng) ? `https://www.google.com/maps?q=${lat.toFixed(5)},${lng.toFixed(5)}` : "");
+      return {
+        point,
+        matchedName: String(stop.matchedName || "").trim() || null,
+        lat,
+        lng,
+        verified: Boolean(stop.verified) || (Number.isFinite(lat) && Number.isFinite(lng)),
+        intro: String(stop.intro || "").trim() || null,
+        primaryType: null,
+        rating: null,
+        userRatingCount: null,
+        date: dt.date || null,
+        time: dt.time || null,
+        googleMapsUri: mapsUri || null,
+        recommendReason: String(stop.recommendReason || "").trim() || null,
+      };
+    })
+    .filter(Boolean);
+
+  if (!route.length) throw new Error("请至少填写一个有效站点。");
+
+  const routePath = route
+    .filter((step) => Number.isFinite(step.lat) && Number.isFinite(step.lng))
+    .map((step) => ({ lat: step.lat, lng: step.lng }));
+
+  const uniqueDays = new Set(route.map((step) => String(step.date || "").trim()).filter(Boolean));
+  const summary = buildManualRouteSummary(route);
+  return {
+    id: `PLAN-MANUAL-${Date.now()}`,
+    title,
+    budgetEstimate: "中预算",
+    reason: note || "这条路线由你手动创建，可继续编辑并直接发起活动。",
+    route,
+    routePath: routePath.length >= 2 ? routePath : null,
+    validationSummary: {
+      total: route.length,
+      verified: route.filter((step) => step.verified).length,
+      realtime: true,
+      multiDay: uniqueDays.size || 1,
+    },
+    routeSummary: summary,
+    bookingLinks: null,
+    narrative: null,
+    intent: {
+      companion: "朋友",
+      people: "2",
+      budget: "中预算",
+      timeSlot: "周末半天",
+      interest: "手动路线",
+      area: deriveAreaFromCityCountry(city, country),
+      city,
+      country,
+      startDate: String(route[0]?.date || ""),
+      endDate: String(route[route.length - 1]?.date || ""),
+      startTime: String(route[0]?.time || ""),
+      fromCountry: "",
+    },
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+async function applyManualRouteDraftToPlan() {
+  const plan = buildManualRoutePlanPayload();
+  const placesToSave = plan.route
+    .map((step) => ({
+      name: step.point,
+      lat: Number.isFinite(step.lat) ? step.lat : null,
+      lng: Number.isFinite(step.lng) ? step.lng : null,
+      city: plan.intent?.city || "",
+      country: plan.intent?.country || "",
+      source: "manual_route",
+    }))
+    .filter((item) => item.name);
+  if (placesToSave.length) {
+    placesToSave.forEach((item) => upsertManualPlace(item));
+    renderManualPlaces();
+    await saveManualPlacesForAccount(placesToSave);
+  }
+  toggleManualRouteSection(false);
+  await applyGeneratedPlan(plan, "手动添加路线");
+}
+
 function normalizeManualPlace(raw = {}) {
   const lat = Number(raw.lat);
   const lng = Number(raw.lng);
@@ -2588,8 +2940,10 @@ function renderAggregatedFeed(items) {
       const whenText = when ? new Date(when).toLocaleString() : "时间未提供";
       const sourceText = item.source || item.creator?.displayName || "聚合源";
       const url = item.ticketUrl || item.link || item.booking?.official || "";
+      const mediaPreview = type === "inspiration" ? renderInspirationMediaPreview(item) : "";
       const moreBody = `
         <p class="chat-content">${escapeHtml(desc || "暂无详情")}</p>
+        ${mediaPreview}
         <div class="actions">
           ${
             url
@@ -2604,6 +2958,7 @@ function renderAggregatedFeed(items) {
         <div class="travel-head"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(feedTypeLabel(type))}</span></div>
         <div class="travel-meta">${escapeHtml(city || "未知城市")}${country ? `, ${escapeHtml(country)}` : ""} ${category ? `| ${escapeHtml(category)}` : ""}</div>
         <div class="travel-meta">${escapeHtml(whenText)} | 来源：${escapeHtml(sourceText)}</div>
+        ${mediaPreview}
         <div class="actions compact-primary-actions">
           <button
             class="btn-secondary feed-plan-btn"
@@ -2713,6 +3068,155 @@ function areaFromCity(city = "", country = "") {
   return "Singapore, Singapore";
 }
 
+function parseTextListInput(value = "") {
+  return String(value || "")
+    .split(/[\n,\uFF0C;；]+/g)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeHttpUrl(value = "") {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  try {
+    const parsed = new URL(text);
+    const protocol = parsed.protocol.toLowerCase();
+    if (protocol !== "http:" && protocol !== "https:") return "";
+    return parsed.toString();
+  } catch (_err) {
+    return "";
+  }
+}
+
+function normalizeInspirationPhotoUrls(value = "") {
+  const items = Array.isArray(value) ? value : parseTextListInput(value);
+  const out = [];
+  const seen = new Set();
+  items.forEach((raw) => {
+    const normalized = normalizeHttpUrl(raw);
+    if (!normalized) return;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(normalized);
+  });
+  return out.slice(0, 9);
+}
+
+function normalizeInspirationVideoLinks(value = "") {
+  const items = Array.isArray(value) ? value : parseTextListInput(value);
+  const out = [];
+  const seen = new Set();
+  items.forEach((raw) => {
+    const normalized = normalizeHttpUrl(typeof raw === "string" ? raw : raw?.url);
+    if (!normalized) return;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) return;
+    const meta = parseVideoMetaFromUrl(normalized);
+    if (!meta) return;
+    seen.add(key);
+    out.push({ url: meta.url, platform: meta.platform });
+  });
+  return out.slice(0, 4);
+}
+
+function parseVideoMetaFromUrl(url = "") {
+  const clean = normalizeHttpUrl(url);
+  if (!clean) return null;
+  try {
+    const parsed = new URL(clean);
+    const host = parsed.hostname.toLowerCase();
+    const path = parsed.pathname || "";
+    if (host.includes("youtu.be")) {
+      const id = path.split("/").filter(Boolean)[0] || "";
+      if (!id) return null;
+      return {
+        url: `https://www.youtube.com/watch?v=${id}`,
+        platform: "youtube",
+        embedUrl: `https://www.youtube.com/embed/${id}`,
+      };
+    }
+    if (host.includes("youtube.com")) {
+      let id = "";
+      if (path.startsWith("/watch")) {
+        id = parsed.searchParams.get("v") || "";
+      } else if (path.startsWith("/shorts/")) {
+        id = path.split("/shorts/")[1]?.split("/")[0] || "";
+      } else if (path.startsWith("/embed/")) {
+        id = path.split("/embed/")[1]?.split("/")[0] || "";
+      }
+      if (!id) return null;
+      return {
+        url: `https://www.youtube.com/watch?v=${id}`,
+        platform: "youtube",
+        embedUrl: `https://www.youtube.com/embed/${id}`,
+      };
+    }
+    if (host.includes("bilibili.com")) {
+      const segs = path.split("/").filter(Boolean);
+      const idx = segs.findIndex((s) => s.toLowerCase() === "video");
+      const code = idx >= 0 ? segs[idx + 1] : "";
+      if (!code) return null;
+      const lowerCode = code.toLowerCase();
+      const embedQuery = lowerCode.startsWith("bv")
+        ? `bvid=${encodeURIComponent(code)}`
+        : lowerCode.startsWith("av")
+          ? `aid=${encodeURIComponent(code.slice(2))}`
+          : `bvid=${encodeURIComponent(code)}`;
+      return {
+        url: `https://www.bilibili.com/video/${code}`,
+        platform: "bilibili",
+        embedUrl: `https://player.bilibili.com/player.html?${embedQuery}&high_quality=1&danmaku=0`,
+      };
+    }
+    if (host.includes("b23.tv")) {
+      const token = path.split("/").filter(Boolean)[0] || "";
+      if (!token) return null;
+      return {
+        url: `https://b23.tv/${token}`,
+        platform: "bilibili",
+        embedUrl: "",
+      };
+    }
+  } catch (_err) {
+    return null;
+  }
+  return null;
+}
+
+function renderInspirationMediaPreview(post) {
+  const photos = normalizeInspirationPhotoUrls(post?.photoUrls || post?.photos || post?.images || []);
+  const cover = normalizeHttpUrl(post?.coverImageUrl || "");
+  if (cover && photos.every((url) => url.toLowerCase() !== cover.toLowerCase())) {
+    photos.unshift(cover);
+  }
+  const videos = normalizeInspirationVideoLinks(post?.videoLinks || post?.videos || []);
+
+  const photoHtml = photos.length
+    ? `<div class="inspiration-media-grid">${photos
+        .slice(0, 6)
+        .map(
+          (url) => `<a class="inspiration-photo" href="${escapeHtml(url)}" target="_blank" rel="noreferrer"><img src="${escapeHtml(
+            url,
+          )}" alt="inspiration photo" loading="lazy" /></a>`,
+        )
+        .join("")}</div>`
+    : "";
+
+  const videoHtml = videos.length
+    ? `<div class="inspiration-video-grid">${videos
+        .map((video) => {
+          const parsed = parseVideoMetaFromUrl(video.url);
+          if (parsed?.embedUrl) {
+            return `<div class="inspiration-video-frame"><iframe src="${escapeHtml(parsed.embedUrl)}" allowfullscreen loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe></div>`;
+          }
+          return `<a class="inspiration-video-link" href="${escapeHtml(video.url)}" target="_blank" rel="noreferrer">打开${video.platform === "bilibili" ? "B站" : "YouTube"}视频</a>`;
+        })
+        .join("")}</div>`
+    : "";
+  return `${photoHtml}${videoHtml}`;
+}
+
 function renderInspirations(posts) {
   if (!posts.length) {
     inspirationList.innerHTML = `<div class="meta">暂无灵感内容。</div>`;
@@ -2722,8 +3226,20 @@ function renderInspirations(posts) {
     .map((p) => {
       const tags = (p.tags || []).join(" · ");
       const places = (p.places || []).join(" · ");
+      const mediaPreview = renderInspirationMediaPreview(p);
+      const videos = normalizeInspirationVideoLinks(p.videoLinks || p.videos || []);
+      const videoLinks = videos.length
+        ? `<div class="actions">${videos
+            .map((item) => {
+              const label = item.platform === "bilibili" ? "B站视频" : "YouTube视频";
+              return `<a href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">${label}</a>`;
+            })
+            .join("")}</div>`
+        : "";
       const moreBody = `
         <p class="chat-content">${escapeHtml(p.content || "")}</p>
+        ${mediaPreview}
+        ${videoLinks}
         <div class="actions">
           <button class="btn-secondary inspiration-like-btn" data-ins-id="${p.id}" type="button">点赞/取消</button>
           <button class="btn-secondary inspiration-buddy-btn" data-ins-title="${escapeHtml(p.title || "")}" type="button">发起找搭子讨论</button>
@@ -2735,6 +3251,7 @@ function renderInspirations(posts) {
         <div class="travel-meta">作者：${escapeHtml(p.creator?.displayName || "Unknown")} | 点赞：${(p.likes || []).length}</div>
         <div class="travel-meta">标签：${escapeHtml(tags || "无")} </div>
         <div class="travel-meta">地点：${escapeHtml(places || "无")} </div>
+        ${mediaPreview}
         <div class="actions compact-primary-actions">
           <button class="btn-secondary inspiration-plan-btn" data-ins-id="${p.id}" data-ins-city="${escapeHtml(
             p.city || "",
@@ -4470,6 +4987,12 @@ inspirationForm.addEventListener("submit", async (e) => {
   if (!currentUser) return alert("请先登录。");
   const data = Object.fromEntries(new FormData(inspirationForm).entries());
   try {
+    const photoUrls = normalizeInspirationPhotoUrls(data.photoUrls || "");
+    const cover = normalizeHttpUrl(data.coverImageUrl || "");
+    if (cover && photoUrls.every((url) => url.toLowerCase() !== cover.toLowerCase())) {
+      photoUrls.unshift(cover);
+    }
+    const videoLinks = normalizeInspirationVideoLinks(data.videoLinks || "");
     await api.createInspiration({
       title: data.title,
       city: data.city,
@@ -4482,6 +5005,9 @@ inspirationForm.addEventListener("submit", async (e) => {
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean),
+      coverImageUrl: cover,
+      photoUrls,
+      videoLinks: videoLinks.map((item) => item.url),
       content: data.content,
     });
     inspirationForm.reset();
@@ -4964,6 +5490,74 @@ if (intentGenerateFastBtn) {
   });
 }
 
+if (openManualRouteBtn) {
+  openManualRouteBtn.addEventListener("click", () => {
+    ensureManualRouteDraftInitialized(true);
+    toggleManualRouteSection(true);
+    navigateToScreen("plan", "manual-route-section");
+  });
+}
+
+if (manualRouteBackBtn) {
+  manualRouteBackBtn.addEventListener("click", () => {
+    toggleManualRouteSection(false);
+    navigateToScreen("plan", "intent-section");
+  });
+}
+
+if (manualRouteAddStopBtn) {
+  manualRouteAddStopBtn.addEventListener("click", () => {
+    manualRouteDraftStops.push(createManualRouteStop());
+    renderManualRouteStops();
+  });
+}
+
+if (manualRouteStops) {
+  manualRouteStops.addEventListener("input", (e) => {
+    const fieldEl = e.target.closest("[data-stop-field]");
+    if (!fieldEl) return;
+    const stopId = fieldEl.getAttribute("data-stop-id");
+    const field = fieldEl.getAttribute("data-stop-field");
+    if (!stopId || !field) return;
+    updateManualRouteStopField(stopId, field, fieldEl.value);
+  });
+
+  manualRouteStops.addEventListener("click", async (e) => {
+    const actionBtn = e.target.closest("[data-stop-action]");
+    if (!actionBtn) return;
+    const stopId = actionBtn.getAttribute("data-stop-id");
+    const action = actionBtn.getAttribute("data-stop-action");
+    if (!stopId || !action) return;
+    if (action === "up" || action === "down") {
+      moveManualRouteStop(stopId, action);
+      return;
+    }
+    if (action === "remove") {
+      if (manualRouteDraftStops.length <= 1) {
+        showToast("至少保留 1 个站点。", "error");
+        return;
+      }
+      manualRouteDraftStops = manualRouteDraftStops.filter((item) => item.id !== stopId);
+      renderManualRouteStops();
+      return;
+    }
+    if (action === "verify") {
+      await verifyManualRouteStop(stopId);
+    }
+  });
+}
+
+if (manualRouteForm) {
+  manualRouteForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      await applyManualRouteDraftToPlan();
+    } catch (err) {
+      alert(`手动路线回填失败: ${err.message}`);
+    }
+  });
+}
+
 collabTripForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   if (!currentUser) return alert("请先登录。");
@@ -5272,6 +5866,8 @@ async function boot() {
   await refreshEvents();
   await renderDefaultGlobalMap();
   renderManualPlaces();
+  ensureManualRouteDraftInitialized(true);
+  toggleManualRouteSection(false);
   renderFlowState();
 }
 

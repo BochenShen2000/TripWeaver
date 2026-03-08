@@ -254,6 +254,7 @@ struct PlanView: View {
     @State private var locationHint = ""
     @State private var selectedCountryPreset = "Singapore"
     @State private var selectedCityPreset = "Singapore"
+    @State private var showManualRouteBuilder = false
 
     var body: some View {
         NavigationStack {
@@ -273,6 +274,16 @@ struct PlanView: View {
             .navigationTitle("路线生成")
             .toolbarTitleDisplayMode(.inline)
             .toolbarBackground(.visible, for: .navigationBar)
+            .navigationDestination(isPresented: $showManualRouteBuilder) {
+                ManualRouteBuilderView(
+                    initialCity: intent.city,
+                    initialCountry: intent.country,
+                    initialStartAt: startDateTime
+                ) { result in
+                    applyManualRoute(result)
+                }
+                .environmentObject(session)
+            }
             .task(id: session.token) {
                 syncPresetSelectionFromIntent()
                 await loadManualSuggestions(q: "")
@@ -459,6 +470,13 @@ struct PlanView: View {
                 }
                 .buttonStyle(TWPrimaryButtonStyle())
                 .disabled(loading)
+
+                Button {
+                    showManualRouteBuilder = true
+                } label: {
+                    Label("手动添加路线", systemImage: "pencil.and.list.clipboard")
+                }
+                .buttonStyle(TWSecondaryButtonStyle())
 
                 if !errorMessage.isEmpty {
                     Text(errorMessage)
@@ -1280,6 +1298,87 @@ struct PlanView: View {
         }
     }
 
+    private func applyManualRoute(_ result: ManualRouteBuildResult) {
+        intent.city = result.city
+        intent.country = result.country
+        intent.area = [result.city, result.country].filter { !$0.isEmpty }.joined(separator: ", ")
+        syncPresetSelectionFromIntent()
+
+        let path = buildRoutePath(for: result.route, fallback: nil)
+        let summary = manualRouteSummary(result.route)
+        let message = result.note.trimmingCharacters(in: .whitespacesAndNewlines)
+        let planTitle = result.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "手动路线" : result.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let nowID = Int(Date().timeIntervalSince1970)
+        let manualPlan = Plan(
+            id: "PLAN-MANUAL-\(nowID)",
+            title: planTitle,
+            budgetEstimate: intent.budget,
+            reason: message.isEmpty ? "这条路线由你手动创建，可继续编辑并直接发起活动。" : message,
+            route: result.route,
+            routePath: path,
+            validationSummary: ValidationSummary(
+                total: result.route.count,
+                verified: result.route.filter { $0.verified == true }.count,
+                realtime: true,
+                multiDay: Set(result.route.compactMap { $0.date }).count
+            ),
+            routeSummary: summary,
+            bookingLinks: nil,
+            narrative: nil
+        )
+        plan = manualPlan
+        editableStops = result.route.map(EditableRouteStop.init)
+        routeEditSnapshot = editableStops
+        syncLaunchComposer(with: manualPlan, force: true)
+        editingRoute = false
+        activityMessage = "手动路线已生成，可继续编辑或直接发起活动。"
+    }
+
+    private func manualRouteSummary(_ route: [RouteStop]) -> RouteSummary? {
+        guard !route.isEmpty else { return nil }
+        var distanceMeters: CLLocationDistance = 0
+        var previous: CLLocationCoordinate2D?
+        for stop in route {
+            guard let lat = stop.lat, let lng = stop.lng else {
+                previous = nil
+                continue
+            }
+            let current = CLLocationCoordinate2D(latitude: lat, longitude: lng)
+            if let previous {
+                let from = CLLocation(latitude: previous.latitude, longitude: previous.longitude)
+                let to = CLLocation(latitude: current.latitude, longitude: current.longitude)
+                distanceMeters += from.distance(from: to)
+            }
+            previous = current
+        }
+
+        var durationMin: Int?
+        if let first = route.first, let last = route.last,
+           let start = parseRouteStopDate(first), let end = parseRouteStopDate(last), end > start {
+            durationMin = Int(end.timeIntervalSince(start) / 60)
+        }
+        if distanceMeters <= 0, durationMin == nil {
+            return nil
+        }
+        return RouteSummary(
+            distanceKm: distanceMeters > 0 ? (distanceMeters / 1000) : nil,
+            durationMin: durationMin
+        )
+    }
+
+    private func parseRouteStopDate(_ stop: RouteStop) -> Date? {
+        let day = (stop.date ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let hm = (stop.time ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !day.isEmpty else { return nil }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        if !hm.isEmpty, let dt = formatter.date(from: "\(day) \(hm)") {
+            return dt
+        }
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.date(from: day)
+    }
+
     private func addManualPlaceFromText() {
         let text = manualInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
@@ -1468,6 +1567,469 @@ struct PlanView: View {
         let outFmt = DateFormatter()
         outFmt.dateFormat = "MM-dd HH:mm"
         return outFmt.string(from: date)
+    }
+}
+
+private struct ManualRouteBuildResult {
+    let title: String
+    let city: String
+    let country: String
+    let note: String
+    let route: [RouteStop]
+}
+
+private struct ManualRouteDraftStop: Identifiable, Hashable {
+    let id: UUID
+    var name: String
+    var intro: String
+    var recommendReason: String
+    var dateTime: Date
+    var lat: Double?
+    var lng: Double?
+    var googleMapsUri: String?
+
+    init(
+        id: UUID = UUID(),
+        name: String = "",
+        intro: String = "",
+        recommendReason: String = "",
+        dateTime: Date = Date(),
+        lat: Double? = nil,
+        lng: Double? = nil,
+        googleMapsUri: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.intro = intro
+        self.recommendReason = recommendReason
+        self.dateTime = dateTime
+        self.lat = lat
+        self.lng = lng
+        self.googleMapsUri = googleMapsUri
+    }
+}
+
+private struct ManualRouteStopCard: View {
+    let index: Int
+    @Binding var stop: ManualRouteDraftStop
+    let canMoveUp: Bool
+    let canMoveDown: Bool
+    let onMoveUp: () -> Void
+    let onMoveDown: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("第 \(index + 1) 站")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text(coordinateText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            TextField("地点名称（必填）", text: $stop.name)
+                .textInputAutocapitalization(.words)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(Color.white.opacity(0.92), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+            DatePicker(
+                "到达时间",
+                selection: $stop.dateTime,
+                displayedComponents: [.date, .hourAndMinute]
+            )
+            .datePickerStyle(.compact)
+            .tint(AppTheme.brand)
+
+            TextField("地点介绍（可选）", text: $stop.intro, axis: .vertical)
+                .lineLimit(2...4)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(Color.white.opacity(0.9), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+            TextField("推荐理由（可选）", text: $stop.recommendReason, axis: .vertical)
+                .lineLimit(2...4)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(Color.white.opacity(0.9), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+            HStack(spacing: 8) {
+                Button("上移", action: onMoveUp)
+                    .buttonStyle(TWSecondaryButtonStyle())
+                    .disabled(!canMoveUp)
+
+                Button("下移", action: onMoveDown)
+                    .buttonStyle(TWSecondaryButtonStyle())
+                    .disabled(!canMoveDown)
+
+                Button("删除", action: onDelete)
+                    .buttonStyle(TWSecondaryButtonStyle())
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .background(Color.white.opacity(0.78), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+    }
+
+    private var coordinateText: String {
+        guard let lat = stop.lat, let lng = stop.lng else { return "未标注坐标" }
+        return String(format: "%.4f, %.4f", lat, lng)
+    }
+}
+
+private struct ManualRouteBuilderView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var session: SessionStore
+
+    let onComplete: (ManualRouteBuildResult) -> Void
+
+    @State private var title: String
+    @State private var city: String
+    @State private var country: String
+    @State private var note = ""
+    @State private var stops: [ManualRouteDraftStop]
+    @State private var selectedStopID: UUID?
+    @State private var showMapPicker = false
+    @State private var resolvingMapPoint = false
+    @State private var errorMessage = ""
+
+    init(
+        initialCity: String,
+        initialCountry: String,
+        initialStartAt: Date,
+        onComplete: @escaping (ManualRouteBuildResult) -> Void
+    ) {
+        self.onComplete = onComplete
+        let normalizedCity = initialCity.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedCountry = initialCountry.trimmingCharacters(in: .whitespacesAndNewlines)
+        _title = State(initialValue: "我的旅行路线")
+        _city = State(initialValue: normalizedCity.isEmpty ? "Singapore" : normalizedCity)
+        _country = State(initialValue: normalizedCountry.isEmpty ? "Singapore" : normalizedCountry)
+        _stops = State(
+            initialValue: [
+                ManualRouteDraftStop(name: "", dateTime: initialStartAt),
+                ManualRouteDraftStop(name: "", dateTime: initialStartAt.addingTimeInterval(5400)),
+            ]
+        )
+    }
+
+    var body: some View {
+        ZStack {
+            AppGradientBackground()
+
+            AppPage {
+                introCard
+                baseInfoCard
+                stopsCard
+                mapCard
+                submitCard
+            }
+        }
+        .navigationTitle("手动添加路线")
+        .toolbarTitleDisplayMode(.inline)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .onAppear {
+            if selectedStopID == nil {
+                selectedStopID = stops.first?.id
+            }
+        }
+    }
+
+    private var introCard: some View {
+        TWCard {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("手动路线构建器")
+                    .font(.headline)
+                Text("按你的想法逐站填写地点与时间，直接生成可发起活动的路线。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var baseInfoCard: some View {
+        TWCard {
+            VStack(spacing: 10) {
+                PlanInputField(title: "路线标题", placeholder: "例如：大阪三日吃喝玩乐", text: $title)
+                HStack(spacing: 8) {
+                    PlanInputField(title: "城市", placeholder: "Osaka", text: $city)
+                    PlanInputField(title: "国家和地区", placeholder: "Japan", text: $country)
+                }
+                PlanInputField(title: "路线说明（可选）", placeholder: "这条路线适合谁、节奏如何", text: $note)
+            }
+        }
+    }
+
+    private var stopsCard: some View {
+        TWCard {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("路线站点")
+                        .font(.headline)
+                    Spacer()
+                    Text("\(stops.count) 站")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                ForEach(Array(stops.enumerated()), id: \.element.id) { idx, _ in
+                    ManualRouteStopCard(
+                        index: idx,
+                        stop: $stops[idx],
+                        canMoveUp: idx > 0,
+                        canMoveDown: idx < stops.count - 1,
+                        onMoveUp: { moveStop(from: idx, to: idx - 1) },
+                        onMoveDown: { moveStop(from: idx, to: idx + 1) },
+                        onDelete: { removeStop(at: idx) }
+                    )
+                }
+
+                Button {
+                    appendStop()
+                } label: {
+                    Label("新增一站", systemImage: "plus.circle.fill")
+                }
+                .buttonStyle(TWSecondaryButtonStyle())
+            }
+        }
+    }
+
+    private var mapCard: some View {
+        TWCard {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("地图标点（可选）")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Button(showMapPicker ? "收起地图" : "打开地图") {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showMapPicker.toggle()
+                        }
+                    }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(AppTheme.brandDeep)
+                }
+
+                if !stops.isEmpty {
+                    Picker("要绑定的站点", selection: selectedStopBinding) {
+                        ForEach(stops) { stop in
+                            Text(stopPickerTitle(stop)).tag(stop.id as UUID?)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(Color.white.opacity(0.9), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+
+                if showMapPicker {
+                    ManualPlaceMapPicker(places: mapPlaces) { coordinate in
+                        Task { await resolveMapPointForSelectedStop(coordinate) }
+                    }
+                }
+
+                if resolvingMapPoint {
+                    Text("正在校验地图标点附近真实地点...")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private var submitCard: some View {
+        TWCard {
+            VStack(spacing: 8) {
+                if !errorMessage.isEmpty {
+                    Text(errorMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Button("完成并回填到路线页") {
+                    finishManualRoute()
+                }
+                .buttonStyle(TWPrimaryButtonStyle())
+            }
+        }
+    }
+
+    private var selectedStopBinding: Binding<UUID?> {
+        Binding(
+            get: { selectedStopID ?? stops.first?.id },
+            set: { selectedStopID = $0 }
+        )
+    }
+
+    private var mapPlaces: [ManualPlaceInput] {
+        stops.map { stop in
+            ManualPlaceInput(
+                name: stop.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "未命名站点" : stop.name.trimmingCharacters(in: .whitespacesAndNewlines),
+                placeId: nil,
+                lat: stop.lat,
+                lng: stop.lng,
+                city: city,
+                country: country,
+                address: nil,
+                source: "manual_route",
+                count: nil,
+                lastAt: nil,
+                score: nil
+            )
+        }
+    }
+
+    private func stopPickerTitle(_ stop: ManualRouteDraftStop) -> String {
+        let text = stop.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? "未命名站点" : text
+    }
+
+    private func appendStop() {
+        let baseTime = stops.last?.dateTime.addingTimeInterval(5400) ?? Date().addingTimeInterval(3600)
+        stops.append(ManualRouteDraftStop(name: "", dateTime: baseTime))
+        if selectedStopID == nil {
+            selectedStopID = stops.last?.id
+        }
+    }
+
+    private func moveStop(from: Int, to: Int) {
+        guard from != to else { return }
+        guard from >= 0, from < stops.count else { return }
+        guard to >= 0, to < stops.count else { return }
+        let item = stops.remove(at: from)
+        stops.insert(item, at: to)
+    }
+
+    private func removeStop(at index: Int) {
+        guard index >= 0, index < stops.count else { return }
+        let removingID = stops[index].id
+        stops.remove(at: index)
+        if stops.isEmpty {
+            appendStop()
+        }
+        if selectedStopID == removingID {
+            selectedStopID = stops.first?.id
+        }
+    }
+
+    private func finishManualRoute() {
+        errorMessage = ""
+        let normalizedCity = city.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedCountry = country.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedCity.isEmpty, !normalizedCountry.isEmpty else {
+            errorMessage = "请先填写城市和国家和地区。"
+            return
+        }
+
+        let builtRoute = buildRouteStops()
+        guard !builtRoute.isEmpty else {
+            errorMessage = "请至少填写 1 个有效站点名称。"
+            return
+        }
+
+        let builtTitle = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "手动路线" : title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let result = ManualRouteBuildResult(
+            title: builtTitle,
+            city: normalizedCity,
+            country: normalizedCountry,
+            note: note,
+            route: builtRoute
+        )
+        onComplete(result)
+        dismiss()
+    }
+
+    private func buildRouteStops() -> [RouteStop] {
+        let dayFormatter = DateFormatter()
+        dayFormatter.dateFormat = "yyyy-MM-dd"
+        let timeFormatter = DateFormatter()
+        timeFormatter.dateFormat = "HH:mm"
+
+        return stops.compactMap { stop in
+            let point = stop.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !point.isEmpty else { return nil }
+            let introText = stop.intro.trimmingCharacters(in: .whitespacesAndNewlines)
+            let reasonText = stop.recommendReason.trimmingCharacters(in: .whitespacesAndNewlines)
+            let lat = stop.lat
+            let lng = stop.lng
+            let mapsURL: String?
+            if let uri = stop.googleMapsUri, !uri.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                mapsURL = uri
+            } else if let lat, let lng {
+                mapsURL = "https://www.google.com/maps?q=\(String(format: "%.5f", lat)),\(String(format: "%.5f", lng))"
+            } else {
+                mapsURL = nil
+            }
+            return RouteStop(
+                point: point,
+                matchedName: nil,
+                lat: lat,
+                lng: lng,
+                verified: lat != nil && lng != nil,
+                intro: introText.isEmpty ? nil : introText,
+                primaryType: nil,
+                rating: nil,
+                userRatingCount: nil,
+                date: dayFormatter.string(from: stop.dateTime),
+                time: timeFormatter.string(from: stop.dateTime),
+                googleMapsUri: mapsURL,
+                recommendReason: reasonText.isEmpty ? nil : reasonText
+            )
+        }
+    }
+
+    private func resolveMapPointForSelectedStop(_ coordinate: CLLocationCoordinate2D) async {
+        guard let stopID = selectedStopID ?? stops.first?.id else { return }
+        resolvingMapPoint = true
+        defer { resolvingMapPoint = false }
+
+        do {
+            var comps = URLComponents(string: "/api/places/reverse")
+            comps?.queryItems = [
+                URLQueryItem(name: "lat", value: String(coordinate.latitude)),
+                URLQueryItem(name: "lng", value: String(coordinate.longitude)),
+                URLQueryItem(name: "city", value: city),
+                URLQueryItem(name: "country", value: country),
+            ]
+            let path = comps?.string ?? "/api/places/reverse?lat=\(coordinate.latitude)&lng=\(coordinate.longitude)"
+            let place: DiscoveryPlace = try await APIClient.request(
+                baseURL: session.apiBaseURL,
+                path: path,
+                token: session.token
+            )
+            updateStop(stopID) { stop in
+                stop.lat = place.lat ?? coordinate.latitude
+                stop.lng = place.lng ?? coordinate.longitude
+                stop.googleMapsUri = place.googleMapsUri
+                let currentName = stop.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                if currentName.isEmpty || currentName.hasPrefix("地图标点") {
+                    stop.name = place.point
+                }
+                if stop.intro.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    stop.intro = place.intro ?? ""
+                }
+            }
+        } catch {
+            let latText = String(format: "%.4f", coordinate.latitude)
+            let lngText = String(format: "%.4f", coordinate.longitude)
+            updateStop(stopID) { stop in
+                stop.lat = coordinate.latitude
+                stop.lng = coordinate.longitude
+                if stop.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    stop.name = "地图标点 \(latText), \(lngText)"
+                }
+            }
+        }
+    }
+
+    private func updateStop(_ id: UUID, mutate: (inout ManualRouteDraftStop) -> Void) {
+        guard let idx = stops.firstIndex(where: { $0.id == id }) else { return }
+        var copy = stops[idx]
+        mutate(&copy)
+        stops[idx] = copy
     }
 }
 

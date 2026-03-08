@@ -28,6 +28,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -87,7 +88,10 @@ private data class CreateActivityBody(
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun PlanScreen(session: SessionStore) {
+fun PlanScreen(
+    session: SessionStore,
+    onOpenManualRoute: () -> Unit = {},
+) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val fused = remember { LocationServices.getFusedLocationProviderClient(context) }
@@ -131,6 +135,16 @@ fun PlanScreen(session: SessionStore) {
     var launchVenue by remember { mutableStateOf("") }
     var launchDescription by remember { mutableStateOf("") }
     var launching by remember { mutableStateOf(false) }
+
+    LaunchedEffect(session.pendingManualPlan?.id) {
+        val pending = session.pendingManualPlan ?: return@LaunchedEffect
+        plan = pending
+        launchTitle = pending.title
+        launchVenue = pending.route.firstOrNull()?.point.orEmpty()
+        launchDescription = pending.reason.orEmpty()
+        message = "已回填手动路线 ${pending.route.size} 站"
+        session.setPendingManualPlan(null)
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
         val allowed = grants[Manifest.permission.ACCESS_FINE_LOCATION] == true || grants[Manifest.permission.ACCESS_COARSE_LOCATION] == true
@@ -332,6 +346,13 @@ fun PlanScreen(session: SessionStore) {
                         enabled = !loading,
                     ) {
                         Text(if (loading) "生成中..." else "AI 生成路线")
+                    }
+
+                    Button(
+                        onClick = onOpenManualRoute,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("手动添加路线")
                     }
                 }
             }
